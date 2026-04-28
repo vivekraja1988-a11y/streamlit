@@ -14,9 +14,26 @@
  * limitations under the License.
  */
 
-import { memo, ReactElement, useCallback, useContext, useState } from "react"
+import {
+  memo,
+  ReactElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react"
 
-import { PLACEMENT, TRIGGER_TYPE, Popover as UIPopover } from "baseui/popover"
+import styled from "@emotion/styled"
+import { mergeProps, useButton, useOverlayTrigger } from "react-aria"
+import {
+  OverlayTriggerStateContext,
+  Provider,
+  Popover as RACPopover,
+} from "react-aria-components"
+import { useOverlayTriggerState } from "react-stately"
 
 import { Block as BlockProto } from "@streamlit/protobuf"
 import { notNullOrUndefined } from "@streamlit/utils"
@@ -48,6 +65,44 @@ import {
   StyledPopoverLabelContainer,
 } from "./styled-components"
 
+/** Dialog surface without RAC `Dialog` / `useDialog` so we avoid `useOverlayFocusContain` (full-tree focus trap + inert side effects). */
+const PopoverDialogSurface = styled.section({
+  margin: 0,
+  padding: 0,
+  outline: "none",
+})
+
+const StreamlitPopoverBody = styled(RACPopover, {
+  shouldForwardProp: prop => prop !== "$minWidth",
+})<{ $minWidth: string }>(({ theme, $minWidth }) => ({
+  ...getPopoverContainerStyle(theme),
+  // Portaled popover must sit above the sidebar (z-index ~ header); otherwise
+  // stSidebarContent intercepts pointer events (e2e: popover width/columns, dataframe hover).
+  zIndex: theme.zIndices.toast,
+
+  borderTopLeftRadius: theme.radii.xl,
+  borderTopRightRadius: theme.radii.xl,
+  borderBottomRightRadius: theme.radii.xl,
+  borderBottomLeftRadius: theme.radii.xl,
+
+  marginRight: theme.spacing.lg,
+  marginBottom: theme.spacing.lg,
+
+  maxHeight: "70vh",
+  overflow: "auto",
+  maxWidth: `calc(${theme.sizes.contentMaxWidth} - 2*${theme.spacing.lg})`,
+  minWidth: $minWidth,
+
+  paddingRight: `calc(${theme.spacing.twoXL} - ${theme.sizes.borderWidth})`,
+  paddingLeft: `calc(${theme.spacing.twoXL} - ${theme.sizes.borderWidth})`,
+  paddingBottom: `calc(${theme.spacing.twoXL} - ${theme.sizes.borderWidth})`,
+  paddingTop: `calc(${theme.spacing.twoXL} - ${theme.sizes.borderWidth})`,
+
+  [`@media (max-width: ${theme.breakpoints.sm})`]: {
+    maxWidth: `calc(100% - ${theme.spacing.threeXL})`,
+  },
+}))
+
 export interface PopoverProps {
   element: BlockProto.Popover
   empty: boolean
@@ -62,7 +117,7 @@ export interface PopoverProps {
 
 const Popover: React.FC<React.PropsWithChildren<PopoverProps>> = ({
   element,
-  empty,
+  empty: _empty,
   children,
   stretchWidth,
   widgetMgr,
@@ -94,6 +149,33 @@ const Popover: React.FC<React.PropsWithChildren<PopoverProps>> = ({
   // Single state with optimistic updates for instant UI feedback.
   const [open, setOpen] = useState(initialOpen)
 
+  const handleOpenChange = useCallback(
+    (newOpen: boolean): void => {
+      setOpen(newOpen)
+
+      if (widgetId) {
+        widgetMgr?.setBoolValue(
+          { id: widgetId },
+          newOpen,
+          { fromUi: true },
+          fragmentId
+        )
+      } else if (isPassivelyKeyed) {
+        setStoredOpen(newOpen)
+      }
+    },
+    [widgetMgr, widgetId, fragmentId, isPassivelyKeyed, setStoredOpen]
+  )
+
+  const overlayState = useOverlayTriggerState({
+    isOpen: open,
+    onOpenChange: handleOpenChange,
+  })
+  const overlayStateRef = useRef(overlayState)
+  useEffect(() => {
+    overlayStateRef.current = overlayState
+  }, [overlayState])
+
   // Sync backend state changes (for programmatic control via session_state).
   // Uses render-time comparison instead of useEffect — no DOM side effects needed.
   useExecuteWhenChanged(() => {
@@ -109,38 +191,16 @@ const Popover: React.FC<React.PropsWithChildren<PopoverProps>> = ({
   // can remove the need for this as part of the BaseWeb migration.
   const { width: calculatedWidth, elementRef } = useCalculatedDimensions()
 
-  // Handle popover toggle with optimistic updates
-  const handleToggle = useCallback((): void => {
-    const newOpen = !open
+  const triggerDomRef = useRef<HTMLButtonElement>(null)
+  const triggerLabelId = useId()
 
-    setOpen(newOpen)
+  const { triggerProps, overlayProps } = useOverlayTrigger(
+    { type: "dialog" },
+    overlayState,
+    triggerDomRef
+  )
 
-    if (widgetId) {
-      widgetMgr?.setBoolValue(
-        { id: widgetId },
-        newOpen,
-        { fromUi: true },
-        fragmentId
-      )
-    } else if (isPassivelyKeyed) {
-      setStoredOpen(newOpen)
-    }
-  }, [open, widgetMgr, widgetId, fragmentId, isPassivelyKeyed, setStoredOpen])
-
-  const handleClose = useCallback((): void => {
-    setOpen(false)
-
-    if (widgetId) {
-      widgetMgr?.setBoolValue(
-        { id: widgetId },
-        false,
-        { fromUi: true },
-        fragmentId
-      )
-    } else if (isPassivelyKeyed) {
-      setStoredOpen(false)
-    }
-  }, [widgetMgr, widgetId, fragmentId, isPassivelyKeyed, setStoredOpen])
+  const { buttonProps } = useButton(triggerProps, triggerDomRef)
 
   let kind = BaseButtonKind.SECONDARY
   if (element.type === "primary") {
@@ -152,73 +212,70 @@ const Popover: React.FC<React.PropsWithChildren<PopoverProps>> = ({
   // Hide the chevron if the label is a menu-style icon (e.g., :material/menu:)
   const hideChevron = isMenuStyleIconLabel(element.icon, element.label)
 
+  const popoverMinWidth = stretchWidth
+    ? `${Math.max(calculatedWidth, 160)}px`
+    : theme.sizes.minPopupWidth
+
+  const dialogSurfaceRef = useRef<HTMLElement | null>(null)
+  const streamlitPopoverRef = useRef<HTMLDivElement | null>(null)
+
+  // React Aria's usePopover sets isDismissable=false when isNonModal, so RAC does not
+  // attach outside-dismiss. useInteractOutside can fire during the same gesture that
+  // opens the popover; register a capture listener only after open so the opening click
+  // is never observed as "outside".
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const onDocClickCapture = (e: MouseEvent): void => {
+      const t = e.target as Node | null
+      if (!t) {
+        overlayStateRef.current.close()
+        return
+      }
+      if (triggerDomRef.current?.contains(t)) {
+        return
+      }
+      if (streamlitPopoverRef.current?.contains(t)) {
+        return
+      }
+      overlayStateRef.current.close()
+    }
+    document.addEventListener("click", onDocClickCapture, true)
+    return () => document.removeEventListener("click", onDocClickCapture, true)
+  }, [open])
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return
+    }
+    const surface = dialogSurfaceRef.current
+    if (!surface) {
+      return
+    }
+    if (!surface.contains(document.activeElement)) {
+      surface.focus()
+    }
+  }, [open])
+
   return (
     <Box data-testid="stPopover" className="stPopover" ref={elementRef}>
-      <UIPopover
-        triggerType={TRIGGER_TYPE.click}
-        placement={PLACEMENT.bottomLeft}
-        content={() => children}
-        isOpen={open}
-        onClickOutside={handleClose}
-        // We need to handle the click here as well to allow closing the
-        // popover when the user clicks next to the button in the available
-        // width in the surrounding container.
-        onClick={() => (open ? handleClose() : undefined)}
-        onEsc={handleClose}
-        ignoreBoundary={isInSidebar}
-        popoverMargin={convertRemToPx(theme.spacing.twoXS)}
-        // TODO(lukasmasuch): We currently use renderAll to have a consistent
-        // width during the first and subsequent opens of the popover. Once we ,
-        // support setting an explicit width we should reconsider turning this to
-        // false for a better performance.
-        renderAll={true}
-        overrides={{
-          Body: {
-            props: {
-              "data-testid": "stPopoverBody",
-            },
-            style: () => ({
-              ...getPopoverContainerStyle(theme),
-
-              // Override radii — st.popover uses xl instead of default
-              borderTopLeftRadius: theme.radii.xl,
-              borderTopRightRadius: theme.radii.xl,
-              borderBottomRightRadius: theme.radii.xl,
-              borderBottomLeftRadius: theme.radii.xl,
-
-              marginRight: theme.spacing.lg,
-              marginBottom: theme.spacing.lg,
-
-              maxHeight: "70vh",
-              overflow: "auto",
-              maxWidth: `calc(${theme.sizes.contentMaxWidth} - 2*${theme.spacing.lg})`,
-              minWidth: stretchWidth
-                ? // If width="stretch", we use the container width as minimum:
-                  `${Math.max(calculatedWidth, 160)}px` // 10rem ~= 160px
-                : theme.sizes.minPopupWidth,
-              [`@media (max-width: ${theme.breakpoints.sm})`]: {
-                maxWidth: `calc(100% - ${theme.spacing.threeXL})`,
-              },
-
-              paddingRight: `calc(${theme.spacing.twoXL} - ${theme.sizes.borderWidth})`, // 1px to account for border.
-              paddingLeft: `calc(${theme.spacing.twoXL} - ${theme.sizes.borderWidth})`,
-              paddingBottom: `calc(${theme.spacing.twoXL} - ${theme.sizes.borderWidth})`,
-              paddingTop: `calc(${theme.spacing.twoXL} - ${theme.sizes.borderWidth})`,
-            }),
-          },
-        }}
-      >
-        {/* This needs to be wrapped into a div, otherwise
-        the BaseWeb popover implementation will not work correctly. */}
+      <Provider values={[[OverlayTriggerStateContext, overlayState]]}>
         <div>
           <BaseButtonTooltip help={element.help} containerWidth={true}>
             <BaseButton
-              data-testid="stPopoverButton"
-              kind={kind}
-              size={BaseButtonSize.SMALL}
-              disabled={(empty && !widgetId) || element.disabled}
-              containerWidth={true}
-              onClick={handleToggle}
+              {...mergeProps(buttonProps, {
+                id: triggerLabelId,
+                "data-testid": "stPopoverButton",
+                kind,
+                size: BaseButtonSize.SMALL,
+                // Do not gate on `empty`: block-tree `isEmpty` can be true briefly or for
+                // nested layouts while body content exists; disabling hides the popover UX
+                // and breaks e2e (e.g. width=500px popover in a fixed-height container).
+                disabled: element.disabled,
+                containerWidth: true,
+              })}
+              ref={triggerDomRef}
             >
               <StyledPopoverLabelContainer $hideChevron={hideChevron}>
                 <DynamicButtonLabel
@@ -241,7 +298,44 @@ const Popover: React.FC<React.PropsWithChildren<PopoverProps>> = ({
             </BaseButton>
           </BaseButtonTooltip>
         </div>
-      </UIPopover>
+        <StreamlitPopoverBody
+          ref={streamlitPopoverRef}
+          $minWidth={popoverMinWidth}
+          triggerRef={triggerDomRef}
+          placement="bottom start"
+          offset={convertRemToPx(theme.spacing.twoXS)}
+          shouldFlip
+          isNonModal={true}
+          shouldCloseOnInteractOutside={target => {
+            const t = triggerDomRef.current
+            if (t && (t === target || t.contains(target as Node))) {
+              // Let the trigger's toggle handle press; otherwise outside-dismiss runs first
+              // and toggle re-opens (last onOpenChange(true)).
+              return false
+            }
+            return true
+          }}
+          containerPadding={isInSidebar ? 0 : 12}
+        >
+          <div data-testid="stPopoverBody">
+            <PopoverDialogSurface
+              ref={dialogSurfaceRef}
+              id={overlayProps.id}
+              role="dialog"
+              tabIndex={-1}
+              aria-labelledby={triggerLabelId}
+              onKeyDown={e => {
+                if (e.key === "Escape") {
+                  e.stopPropagation()
+                  overlayState.close()
+                }
+              }}
+            >
+              {children}
+            </PopoverDialogSurface>
+          </div>
+        </StreamlitPopoverBody>
+      </Provider>
     </Box>
   )
 }
