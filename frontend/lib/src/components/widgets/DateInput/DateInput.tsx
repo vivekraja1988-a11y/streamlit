@@ -14,24 +14,40 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/no-use-before-define -- styled components are declared below usage */
+
 import {
+  type ChangeEvent,
+  type ComponentProps,
+  type FocusEvent,
+  type KeyboardEvent,
   memo,
   ReactElement,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react"
 
+import { DatePicker } from "@ark-ui/react/date-picker"
+import type { DatePickerValueChangeDetails } from "@ark-ui/react/date-picker"
+import { Portal } from "@ark-ui/react/portal"
+import styled from "@emotion/styled"
 import { ErrorOutline } from "@emotion-icons/material-outlined"
-import { DENSITY, Datepicker as UIDatePicker } from "baseui/datepicker"
-import { PLACEMENT } from "baseui/popover"
+import {
+  CalendarDate,
+  type DateValue,
+  getLocalTimeZone,
+} from "@internationalized/date"
+import type { DayTableCellState } from "@zag-js/date-picker"
+import type { DateRangePreset } from "@zag-js/date-utils"
 import { format } from "date-fns"
 import moment from "moment"
 
 import { DateInput as DateInputProto } from "@streamlit/protobuf"
 
-import IsSidebarContext from "~lib/components/core/IsSidebarContext"
 import { LibConfigContext } from "~lib/components/core/LibConfigContext"
 import {
   getBorderColor,
@@ -67,6 +83,23 @@ export interface Props {
 // Date format for protobuf communication (ISO 8601)
 const DATE_FORMAT = "YYYY-MM-DD"
 
+const RANGE_SEP = " – "
+
+type DatePickerViewGranularity = "year" | "month" | "day"
+
+type DatePickerTranslations = NonNullable<
+  ComponentProps<typeof DatePicker.Root>["translations"]
+>
+
+function normalizeLocaleTag(tag: string): string {
+  try {
+    const [canonical] = Intl.getCanonicalLocales(tag)
+    return canonical ?? "en-US"
+  } catch {
+    return "en-US"
+  }
+}
+
 /** Convert an array of strings to an array of dates. */
 function stringsToDates(strings: string[]): Date[] {
   return strings.map(val => moment(val, DATE_FORMAT).toDate())
@@ -86,6 +119,39 @@ type ValidationResult = {
   newDates: Date[]
 }
 
+function toCalendarDate(d: Date): CalendarDate {
+  return new CalendarDate(d.getFullYear(), d.getMonth() + 1, d.getDate())
+}
+
+function dateValueToJs(dv: DateValue): Date {
+  return normalizeToStartOfDay(dv.toDate(getLocalTimeZone()))
+}
+
+function datesToValueArray(dates: Date[]): DateValue[] {
+  return dates.map(toCalendarDate)
+}
+
+/** True when the string is a full strict match for the moment format (e.g. YYYY/MM/DD). */
+function isCompleteMomentDate(trimmed: string, momentFormat: string): boolean {
+  const m = moment(trimmed, momentFormat, true)
+  return m.isValid() && m.format(momentFormat) === trimmed
+}
+
+function buildDayCellTranslation(
+  state: DayTableCellState,
+  loadedLocale: import("date-fns").Locale
+): string {
+  const js = dateValueToJs(state.value)
+  const longFmt = format(js, "EEEE, MMMM do yyyy", { locale: loadedLocale })
+  if (state.unavailable || (state.invalid && !state.selectable)) {
+    return `Not available. ${longFmt}.`
+  }
+  if (state.selected) {
+    return `Selected. ${longFmt}. It's available.`
+  }
+  return `Choose ${longFmt}. It's available.`
+}
+
 function DateInput({
   disabled,
   element,
@@ -93,9 +159,9 @@ function DateInput({
   fragmentId,
 }: Props): ReactElement {
   const theme = useEmotionTheme()
-  const isInSidebar = useContext(IsSidebarContext)
   const [isEmpty, setIsEmpty] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [draftResetSeq, setDraftResetSeq] = useState(0)
 
   const resetError = useCallback(() => {
     setError(null)
@@ -104,12 +170,9 @@ function DateInput({
   const handleFormCleared = useCallback(() => {
     resetError()
     setIsEmpty(false)
+    setDraftResetSeq(s => s + 1)
   }, [resetError])
 
-  /**
-   * An array with start and end date specified by the user via the UI. If the user
-   * didn't touch this widget's UI, the default value is used. End date is optional.
-   */
   const queryParamBinding = element.queryParamKey
     ? {
         paramKey: element.queryParamKey,
@@ -135,18 +198,9 @@ function DateInput({
     onFormCleared: handleFormCleared,
   })
 
-  const {
-    colors,
-    fontSizes,
-    fontWeights,
-    lineHeights,
-    spacing,
-    sizes,
-    zIndices,
-  } = useEmotionTheme()
-
-  const { locale } = useContext(LibConfigContext)
-  const loadedLocale = useIntlLocale(locale)
+  const { locale: localeTag } = useContext(LibConfigContext)
+  const arkLocale = normalizeLocaleTag(localeTag)
+  const loadedLocale = useIntlLocale(arkLocale)
 
   const minDate = useMemo(
     () => moment(element.min, DATE_FORMAT).toDate(),
@@ -159,36 +213,17 @@ function DateInput({
     if (!element.isRange) {
       return false
     }
-
-    // Since quick select allows to select ranges up to the past 2 years,
-    // we should only enable it if the min date is older than 2 years ago.
     const twoYearsAgo = moment().subtract(2, "years").toDate()
     return minDate < twoYearsAgo
   }, [element.isRange, minDate])
 
   const clearable = element.default.length === 0 && !disabled
 
-  // We need to extract the mask and format (date-fns notation) from the provided format string
-  // The user configured date format is based on the momentJS notation and is only allowed to contain
-  // one of YYYY/MM/DD, DD/MM/YYYY, or MM/DD/YYYY" and can also use a period (.) or hyphen (-) as separators.
-  // We need to convert the provided format into a mask supported by the Baseweb datepicker
-  // Thereby, we need to replace all letters with 9s which refers to any number.
-  // (Using useMemo to avoid recomputing every time for now reason)
-  const dateMask = useMemo(
-    () => element.format.replaceAll(/[a-zA-Z]/g, "9"),
-    [element.format]
-  )
-
-  // The Baseweb datepicker supports the date-fns notation for date formatting which is
-  // slightly different from the momentJS notation. Therefore, we need to
-  // convert the provided format into the date-fns notation:
-  // (Using useMemo to avoid recomputing every time for now reason)
   const dateFormat = useMemo(
     () => element.format.replaceAll("Y", "y").replaceAll("D", "d"),
     [element.format]
   )
 
-  // Date strings used for error messages
   const minDateString = useMemo(
     () => format(minDate, dateFormat, { locale: loadedLocale }),
     [minDate, dateFormat, loadedLocale]
@@ -200,7 +235,6 @@ function DateInput({
     [maxDate, dateFormat, loadedLocale]
   )
 
-  // Create tooltip error message based on validation error
   const createErrorMessage = useCallback(
     (errorType: string | null): string | null => {
       if (!errorType) return null
@@ -233,13 +267,6 @@ function DateInput({
         return
       }
 
-      /**
-       * Normalize selected dates to start of day (00:00) to avoid time
-       * component inconsistencies. Specifically, BaseWeb quick select uses
-       * 12:00 for the selected date, which can cause validation errors.
-       *
-       * @see https://github.com/streamlit/streamlit/issues/12293
-       */
       const normalizedDateInput: DateOrEmpty[] | DateOrEmpty = Array.isArray(
         date
       )
@@ -248,7 +275,6 @@ function DateInput({
             .map(d => normalizeToStartOfDay(d))
         : normalizeToStartOfDay(date)
 
-      // Handles FE date validation
       const { errorType, newDates } = validateDates(
         normalizedDateInput,
         minDate,
@@ -258,7 +284,7 @@ function DateInput({
         setError(createErrorMessage(errorType))
       }
       setValueWithSource({ value: newDates, fromUi: true })
-      setIsEmpty(!newDates)
+      setIsEmpty(!newDates.length)
     },
     [
       createErrorMessage,
@@ -273,10 +299,111 @@ function DateInput({
   const handleClose = useCallback((): void => {
     if (!isEmpty) return
 
+    // Range: a cleared field must stay empty (()) rather than snapping back to the
+    // proto default range. Single-date widgets still reset to default when empty.
+    if (element.isRange) {
+      return
+    }
+
     const newValue = stringsToDates(element.default)
     setValueWithSource({ value: newValue, fromUi: true })
-    setIsEmpty(!newValue)
+    setIsEmpty(!newValue.length)
   }, [isEmpty, element, setValueWithSource])
+
+  /** Commit an empty range from Escape without clearing validation error UI (e2e parity). */
+  const commitEmptyRangeKeepError = useCallback((): void => {
+    setValueWithSource({ value: [], fromUi: true })
+    setIsEmpty(true)
+  }, [setValueWithSource])
+
+  const timeZone = getLocalTimeZone()
+  const minCal = useMemo(() => toCalendarDate(minDate), [minDate])
+  const maxCal = useMemo(
+    () => (maxDate ? toCalendarDate(maxDate) : undefined),
+    [maxDate]
+  )
+
+  const arkValue = useMemo(() => {
+    const filtered = (value || []).filter(d => {
+      const n = normalizeToStartOfDay(d)
+      if (n < minDate) return false
+      if (maxDate && n > maxDate) return false
+      return true
+    })
+    return datesToValueArray(filtered)
+  }, [value, minDate, maxDate])
+
+  const startOfWeek = loadedLocale.options?.weekStartsOn ?? 0
+
+  const translations = useMemo((): DatePickerTranslations => {
+    return {
+      dayCell: (state: DayTableCellState) =>
+        buildDayCellTranslation(state, loadedLocale),
+      nextTrigger: (v: DatePickerViewGranularity) =>
+        ({
+          year: "Switch to next decade",
+          month: "Switch to next year",
+          day: "Switch to next month",
+        })[v],
+      monthSelect: "Select month",
+      yearSelect: "Select year",
+      viewTrigger: (v: DatePickerViewGranularity) =>
+        ({
+          year: "Switch to month view",
+          month: "Switch to day view",
+          day: "Switch to year view",
+        })[v],
+      prevTrigger: (v: DatePickerViewGranularity) =>
+        ({
+          year: "Switch to previous decade",
+          month: "Switch to previous year",
+          day: "Switch to previous month",
+        })[v],
+      presetTrigger: () => "",
+      clearTrigger: "Clear selected dates",
+      trigger: () => "Open calendar",
+      content: "Calendar.",
+      placeholder: () => ({ day: "dd", month: "mm", year: "yyyy" }),
+      weekColumnHeader: "Wk",
+      weekNumberCell: (weekNumber: number) => `Week ${weekNumber}`,
+    }
+  }, [loadedLocale])
+
+  const formatArkDate = useCallback(
+    (date: DateValue, _details: { locale: string; timeZone: string }) => {
+      const js = date.toDate(timeZone)
+      return format(js, dateFormat, { locale: loadedLocale })
+    },
+    [dateFormat, loadedLocale, timeZone]
+  )
+
+  const onValueChange = useCallback(
+    (details: DatePickerValueChangeDetails) => {
+      const dates = details.value
+        .filter((v): v is DateValue => !isNullOrUndefined(v))
+        .map(v => dateValueToJs(v))
+
+      if (element.isRange) {
+        handleChange({ date: dates })
+      } else {
+        handleChange({ date: dates[0] ?? null })
+      }
+    },
+    [element.isRange, handleChange]
+  )
+
+  const placeholderText = element.isRange
+    ? `${element.format}${RANGE_SEP}${element.format}`
+    : element.format
+
+  const positioning = useMemo(
+    () => ({
+      placement: "bottom-start" as const,
+      strategy: "fixed" as const,
+      gutter: convertRemToPx(theme.spacing.twoXS),
+    }),
+    [theme.spacing.twoXS]
+  )
 
   return (
     <div className="stDateInput" data-testid="stDateInput">
@@ -291,260 +418,706 @@ function DateInput({
           <WidgetLabelHelpIcon content={element.help} label={element.label} />
         )}
       </WidgetLabel>
-      <UIDatePicker
-        locale={loadedLocale}
-        density={DENSITY.high}
-        formatString={dateFormat}
-        mask={element.isRange ? `${dateMask} – ${dateMask}` : dateMask}
-        placeholder={
-          element.isRange
-            ? `${element.format} – ${element.format}`
-            : element.format
-        }
+      <DatePicker.Root
+        locale={arkLocale}
+        selectionMode={element.isRange ? "range" : "single"}
+        value={arkValue}
+        onValueChange={onValueChange}
+        min={minCal}
+        max={maxCal}
         disabled={disabled}
-        onChange={handleChange}
-        onClose={handleClose}
-        quickSelect={enableQuickSelect}
-        overrides={{
-          Popover: {
-            props: {
-              ignoreBoundary: isInSidebar,
-              placement: PLACEMENT.bottomLeft,
-              popoverMargin: convertRemToPx(theme.spacing.twoXS),
-              overrides: {
-                Body: {
-                  style: {
-                    ...getPopoverContainerStyle(theme),
-                    // Override: zero border in light mode because the
-                    // calendar header's shaded background conflicts with
-                    // the background-color border trick.
-                    ...(hasLightBackgroundColor(theme) && {
-                      borderWidth: theme.spacing.none,
-                    }),
-                  },
-                },
-              },
-            },
-          },
-          CalendarContainer: {
-            style: {
-              fontSize: fontSizes.sm,
-              paddingRight: spacing.sm,
-              paddingLeft: spacing.sm,
-              paddingBottom: spacing.sm,
-              paddingTop: spacing.sm,
-              // Remove default border
-              borderWidth: theme.spacing.none,
-            },
-          },
-          Week: {
-            style: {
-              fontSize: fontSizes.sm,
-            },
-          },
-          Day: {
-            style: ({
-              // Due to a bug in BaseWeb, where the range selection defaults to mono300 and can't be changed, we need to override the background colors for all these shared props:
-              // $pseudoHighlighted: Styles the range selection when you click an initial date, and hover over the end one, but NOT click it.
-              // $pseudoSelected: Styles when a range was selected, click outide, and click the calendar again.
-              // $selected: Styles the background below the red circle from the start and end dates.
-              // $isHovered: Styles the background below the end date when hovered.
-              $pseudoHighlighted,
-              $pseudoSelected,
-              $selected,
-              $isHovered,
-            }) => ({
-              fontSize: fontSizes.sm,
-              lineHeight: lineHeights.base,
-
-              "::before": {
-                backgroundColor:
-                  $selected ||
-                  $pseudoSelected ||
-                  $pseudoHighlighted ||
-                  $isHovered
-                    ? `${colors.darkenedBgMix15} !important`
-                    : colors.transparent,
-              },
-
-              "::after": {
-                borderColor: colors.transparent,
-              },
-              //Apply background color only when hovering over a date in the range in light theme
-              ...(hasLightBackgroundColor(theme) &&
-              $isHovered &&
-              $pseudoSelected &&
-              !$selected
-                ? {
-                    color: colors.secondaryBg,
-                  }
-                : {}),
-            }),
-          },
-          PrevButton: {
-            style: () => ({
-              // Align icon to the center of the button.
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              // Remove primary-color click effect.
-              ":active": {
-                backgroundColor: colors.transparent,
-              },
-              ":focus": {
-                backgroundColor: colors.transparent,
-                outline: 0,
-              },
-            }),
-          },
-          NextButton: {
-            style: {
-              // Align icon to the center of the button.
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              // Remove primary-color click effect.
-              ":active": {
-                backgroundColor: colors.transparent,
-              },
-              ":focus": {
-                backgroundColor: colors.transparent,
-                outline: 0,
-              },
-            },
-          },
-          Input: {
-            props: {
-              // The default maskChar ` ` causes empty dates to display as ` / / `
-              // Clearing the maskChar so empty dates will not display
-              maskChar: null,
-
-              // Passes error icon/tooltip to underlying input in error state
-              // otherwise no end enhancer is shown
-              endEnhancer: error && (
-                <Tooltip
-                  content={
-                    <StreamlitMarkdown source={error} allowHTML={false} />
-                  }
-                  placement={Placement.TOP_RIGHT}
-                  error
-                >
-                  <Icon content={ErrorOutline} size="lg" />
-                </Tooltip>
-              ),
-
-              overrides: {
-                EndEnhancer: {
-                  style: {
-                    // Match text color with st.error in light and dark mode
-                    color: colors.redTextColor,
-                    backgroundColor: colors.transparent,
-                  },
-                },
-                Root: {
-                  style: ({ $isFocused }: { $isFocused: boolean }) => {
-                    const borderColor = getBorderColor(colors, $isFocused)
-                    return {
-                      // Baseweb requires long-hand props, short-hand leads to weird bugs & warnings.
-                      borderLeftWidth: sizes.borderWidth,
-                      borderRightWidth: sizes.borderWidth,
-                      borderTopWidth: sizes.borderWidth,
-                      borderBottomWidth: sizes.borderWidth,
-                      paddingRight: spacing.twoXS,
-
-                      borderTopColor: borderColor,
-                      borderRightColor: borderColor,
-                      borderBottomColor: borderColor,
-                      borderLeftColor: borderColor,
-
-                      // Baseweb has an error prop for the input, but its coloring doesn't reconcile
-                      // with our dark theme - we handle error state coloring manually here
-                      ...(error && {
-                        backgroundColor: colors.redBackgroundColor,
-                      }),
-                    }
-                  },
-                },
-                ClearIcon: {
-                  props: {
-                    overrides: {
-                      Svg: {
-                        style: {
-                          color: colors.grayTextColor,
-                          // setting this width and height makes the clear-icon align with dropdown arrows of other input fields
-                          padding: spacing.threeXS,
-                          height: sizes.clearIconSize,
-                          width: sizes.clearIconSize,
-                          ":hover": {
-                            fill: colors.bodyText,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-                InputContainer: {
-                  style: {
-                    // Explicitly specified so error background renders correctly
-                    backgroundColor: "transparent",
-                  },
-                },
-                Input: {
-                  style: {
-                    // Input overlays Placeholder - position relative + zIndex ensures
-                    // input is clickable above the absolutely positioned placeholder
-                    position: "relative",
-                    zIndex: zIndices.priority,
-                    fontWeight: fontWeights.normal,
-                    // Baseweb requires long-hand props, short-hand leads to weird bugs & warnings.
-                    paddingRight: spacing.sm,
-                    paddingLeft: `calc(${spacing.sm} + ${sizes.tagMarginInsideBorder})`,
-                    paddingBottom: spacing.sm,
-                    paddingTop: spacing.sm,
-                    lineHeight: lineHeights.inputWidget,
-
-                    "::placeholder": {
-                      color: colors.fadedText60,
-                    },
-
-                    // Change input value text color in error state - matches st.error in light and dark mode
-                    ...(error && {
-                      color: colors.redTextColor,
-                    }),
-                  },
-                  props: {
-                    "data-testid": "stDateInputField",
-                  },
-                },
-              },
-            },
-          },
-          QuickSelect: {
-            props: {
-              overrides: {
-                ControlContainer: {
-                  style: {
-                    height: sizes.minElementHeight,
-                    // Baseweb requires long-hand props, short-hand leads to weird bugs & warnings.
-                    borderLeftWidth: sizes.borderWidth,
-                    borderRightWidth: sizes.borderWidth,
-                    borderTopWidth: sizes.borderWidth,
-                    borderBottomWidth: sizes.borderWidth,
-                  },
-                },
-              },
-            },
-          },
+        readOnly={false}
+        timeZone={timeZone}
+        startOfWeek={startOfWeek}
+        translations={translations}
+        format={formatArkDate}
+        placeholder={placeholderText}
+        openOnClick={false}
+        closeOnSelect={!element.isRange}
+        positioning={positioning}
+        onOpenChange={({ open }) => {
+          if (!open) {
+            handleClose()
+          }
         }}
-        value={value}
-        minDate={minDate}
-        maxDate={maxDate}
-        range={element.isRange}
-        clearable={clearable}
-      />
+      >
+        <StyledControl>
+          {element.isRange ? (
+            <RangeTextField
+              value={value}
+              minDate={minDate}
+              maxDate={maxDate}
+              momentFormat={element.format}
+              dateFormat={dateFormat}
+              loadedLocale={loadedLocale}
+              element={element}
+              clearable={clearable}
+              handleChange={handleChange}
+              handleClose={handleClose}
+              commitEmptyRangeKeepError={commitEmptyRangeKeepError}
+              setIsEmpty={setIsEmpty}
+              error={error}
+              draftResetSeq={draftResetSeq}
+            />
+          ) : (
+            <SingleTextField
+              value={value}
+              minDate={minDate}
+              maxDate={maxDate}
+              placeholder={element.format}
+              momentFormat={element.format}
+              dateFormat={dateFormat}
+              loadedLocale={loadedLocale}
+              clearable={clearable}
+              handleChange={handleChange}
+              handleClose={handleClose}
+              setIsEmpty={setIsEmpty}
+              error={error}
+              draftResetSeq={draftResetSeq}
+            />
+          )}
+          {error && (
+            <Tooltip
+              content={<StreamlitMarkdown source={error} allowHTML={false} />}
+              placement={Placement.TOP_RIGHT}
+              error
+            >
+              <Icon content={ErrorOutline} size="lg" />
+            </Tooltip>
+          )}
+          {clearable && (
+            <StyledClearTrigger type="button">×</StyledClearTrigger>
+          )}
+        </StyledControl>
+
+        <Portal>
+          <DatePicker.Positioner>
+            <DatePicker.Context>
+              {datePicker => (
+                <StyledContent
+                  data-testid={
+                    datePicker.open ? "stDateInputCalendar" : undefined
+                  }
+                >
+                  <>
+                    {enableQuickSelect && (
+                      <StyledQuickSelect
+                        data-testid={
+                          datePicker.open
+                            ? "stDateInputQuickSelect"
+                            : undefined
+                        }
+                        aria-label="Quick select date range"
+                        defaultValue=""
+                        onChange={e => {
+                          const preset = e.target.value as DateRangePreset
+                          if (!preset) return
+                          const next = datePicker.getRangePresetValue(preset)
+                          datePicker.setValue(next)
+                          e.currentTarget.selectedIndex = 0
+                        }}
+                      >
+                        <option value="" disabled>
+                          Presets
+                        </option>
+                        <option value="last7Days">Past Week</option>
+                      </StyledQuickSelect>
+                    )}
+                    <DatePicker.View view="day">
+                      <StyledViewControl>
+                        <DatePicker.PrevTrigger />
+                        <DatePicker.ViewTrigger>
+                          <DatePicker.RangeText />
+                        </DatePicker.ViewTrigger>
+                        <DatePicker.NextTrigger />
+                      </StyledViewControl>
+                      <DatePicker.Table>
+                        <DatePicker.TableHead>
+                          <DatePicker.TableRow>
+                            {datePicker.weekDays.map(day => (
+                              <DatePicker.TableHeader key={day.short}>
+                                {day.short}
+                              </DatePicker.TableHeader>
+                            ))}
+                          </DatePicker.TableRow>
+                        </DatePicker.TableHead>
+                        <DatePicker.TableBody>
+                          {datePicker.weeks.map(week => (
+                            <DatePicker.TableRow
+                              key={week.map(d => d.toString()).join("|")}
+                            >
+                              {week.map(day => (
+                                <DatePicker.TableCell
+                                  key={day.toString()}
+                                  value={day}
+                                >
+                                  <DatePicker.TableCellTrigger />
+                                </DatePicker.TableCell>
+                              ))}
+                            </DatePicker.TableRow>
+                          ))}
+                        </DatePicker.TableBody>
+                      </DatePicker.Table>
+                    </DatePicker.View>
+                  </>
+                </StyledContent>
+              )}
+            </DatePicker.Context>
+          </DatePicker.Positioner>
+        </Portal>
+      </DatePicker.Root>
     </div>
   )
 }
+
+function SingleTextField({
+  value,
+  minDate: _minDate,
+  maxDate: _maxDate,
+  placeholder,
+  momentFormat,
+  dateFormat,
+  loadedLocale,
+  clearable,
+  handleChange,
+  handleClose,
+  setIsEmpty,
+  error,
+  draftResetSeq,
+}: {
+  value: Date[]
+  minDate: Date
+  maxDate: Date | undefined
+  placeholder: string
+  momentFormat: string
+  dateFormat: string
+  loadedLocale: import("date-fns").Locale
+  clearable: boolean
+  handleChange: (args: {
+    date: Date | (Date | null | undefined)[] | null | undefined
+  }) => void
+  handleClose: () => void
+  setIsEmpty: (v: boolean) => void
+  error: string | null
+  draftResetSeq: number
+}): ReactElement {
+  const [draft, setDraft] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const lastNativeValueRef = useRef<string>("")
+  /** Latest commit fn for native `change` (Playwright `fill`) — defined inside Context render. */
+  const commitSingleIfDistinctRef = useRef<(raw: string) => void>(() => {})
+
+  const valueSyncKey = useMemo(
+    () =>
+      value.length === 0
+        ? ""
+        : String(normalizeToStartOfDay(value[0]).getTime()),
+    [value]
+  )
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setDraft(null)
+    })
+  }, [valueSyncKey])
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setDraft(null)
+    })
+  }, [draftResetSeq])
+
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) {
+      return
+    }
+    // Playwright `fill()` and some native paths update the DOM without React seeing a
+    // synthetic change event. Keep `draft` in sync so the controlled value does not
+    // overwrite the DOM before Enter/blur commits.
+    const syncNative = (): void => {
+      const v = el.value
+      lastNativeValueRef.current = v
+      setDraft(v)
+      if (v === "") {
+        setIsEmpty(true)
+      }
+    }
+    const tryCommitNative = (): void => {
+      // Playwright `fill()` can dispatch `input` without a reliable `change` for
+      // controlled inputs. Per-keystroke typing is handled by React `onChange`.
+      commitSingleIfDistinctRef.current(lastNativeValueRef.current)
+    }
+    const onNativeInput = (_ev: Event): void => {
+      syncNative()
+      // Playwright `fill()` often dispatches `input` without `insertReplacementText`;
+      // still commit when the field becomes a complete date (distinct from widget value).
+      tryCommitNative()
+    }
+    const onNativeChange = (): void => {
+      syncNative()
+      tryCommitNative()
+    }
+    el.addEventListener("input", onNativeInput, { capture: true })
+    el.addEventListener("change", onNativeChange, { capture: true })
+    // Avoid syncNative() on attach — stale DOM after form-clear can overwrite `draft`.
+    lastNativeValueRef.current = el.value
+    return () => {
+      el.removeEventListener("input", onNativeInput, { capture: true })
+      el.removeEventListener("change", onNativeChange, { capture: true })
+    }
+  }, [valueSyncKey, draftResetSeq, setIsEmpty])
+
+  return (
+    <DatePicker.Context>
+      {dp => {
+        const fromState = value[0]
+          ? format(normalizeToStartOfDay(value[0]), dateFormat, {
+              locale: loadedLocale,
+            })
+          : ""
+        const shown = draft ?? fromState
+
+        const commitSingle = (raw: string): void => {
+          const trimmed = raw.trim()
+          if (!trimmed) {
+            return
+          }
+          if (!isCompleteMomentDate(trimmed, momentFormat)) {
+            return
+          }
+          const m = moment(trimmed, momentFormat, true)
+          const d = normalizeToStartOfDay(m.toDate())
+          handleChange({ date: d })
+        }
+
+        /** Used for Enter/blur so fill()+Enter does not commit twice (same parsed date). */
+        const commitSingleIfDistinct = (raw: string): void => {
+          const trimmed = raw.trim()
+          if (!trimmed) {
+            return
+          }
+          if (!isCompleteMomentDate(trimmed, momentFormat)) {
+            return
+          }
+          const m = moment(trimmed, momentFormat, true)
+          const d = normalizeToStartOfDay(m.toDate())
+          if (
+            value.length > 0 &&
+            normalizeToStartOfDay(value[0]).getTime() === d.getTime()
+          ) {
+            return
+          }
+          handleChange({ date: d })
+        }
+        commitSingleIfDistinctRef.current = commitSingleIfDistinct
+
+        const handleInputChangeLike = (
+          e: ChangeEvent<HTMLInputElement>
+        ): void => {
+          const v = e.currentTarget.value
+          setDraft(v)
+          if (v === "") {
+            setIsEmpty(true)
+          }
+          commitSingle(v)
+        }
+
+        const handleDateFieldFocus = (
+          e: FocusEvent<HTMLInputElement>
+        ): void => {
+          // Select-all on focus when a date is committed so typing/fill replaces the
+          // whole value (e2e: dynamic date input `fill` must not append). For an empty
+          // field, avoid select-all so segmented typing still works.
+          if (value.length === 0) {
+            return
+          }
+          const el = e.currentTarget
+          el.select()
+          // Second select on the next frame helps Playwright `fill()` after focus; skip
+          // when the field shows error styling so snapshot tests stay stable.
+          if (!error) {
+            requestAnimationFrame(() => {
+              el.select()
+            })
+          }
+        }
+
+        const handleInputKeyDown = (
+          e: KeyboardEvent<HTMLInputElement>
+        ): void => {
+          if (e.key === "Enter" || e.key === "NumpadEnter") {
+            e.preventDefault()
+            e.stopPropagation()
+            const el = e.currentTarget
+            // After Playwright `fill()`, React can reconcile the controlled `value` prop and
+            // revert the DOM before keydown; `lastNativeValueRef` is updated in capture phase
+            // on input/change and stays authoritative.
+            const v = lastNativeValueRef.current ?? el.value
+            commitSingleIfDistinct(v)
+            el.blur()
+            return
+          }
+          if (e.key === "Escape") {
+            e.preventDefault()
+            e.stopPropagation()
+            dp.setOpen(false)
+            if (clearable) {
+              setDraft(null)
+              handleChange({ date: null })
+            }
+          }
+        }
+
+        return (
+          <StyledRangeInput
+            ref={inputRef}
+            $hasError={Boolean(error)}
+            data-testid="stDateInputField"
+            disabled={dp.disabled}
+            aria-label="Select a date."
+            value={shown}
+            placeholder={placeholder}
+            onClick={() => {
+              dp.setOpen(true)
+              requestAnimationFrame(() => {
+                inputRef.current?.select()
+              })
+            }}
+            onFocus={handleDateFieldFocus}
+            onChange={handleInputChangeLike}
+            onBlur={e => {
+              const el = e.currentTarget
+              const raw = lastNativeValueRef.current || el.value
+              setDraft(null)
+              const trimmed = raw.trim()
+              if (!trimmed) {
+                handleChange({ date: null })
+                handleClose()
+                return
+              }
+              commitSingleIfDistinct(raw)
+            }}
+            onKeyDown={handleInputKeyDown}
+          />
+        )
+      }}
+    </DatePicker.Context>
+  )
+}
+
+function RangeTextField({
+  value,
+  minDate: _minDate,
+  maxDate: _maxDate,
+  momentFormat,
+  dateFormat,
+  loadedLocale,
+  element,
+  clearable,
+  handleChange,
+  handleClose,
+  commitEmptyRangeKeepError,
+  setIsEmpty,
+  error,
+  draftResetSeq,
+}: {
+  value: Date[]
+  minDate: Date
+  maxDate: Date | undefined
+  momentFormat: string
+  dateFormat: string
+  loadedLocale: import("date-fns").Locale
+  element: DateInputProto
+  clearable: boolean
+  handleChange: (args: {
+    date: Date | (Date | null | undefined)[] | null | undefined
+  }) => void
+  handleClose: () => void
+  commitEmptyRangeKeepError: () => void
+  setIsEmpty: (v: boolean) => void
+  error: string | null
+  draftResetSeq: number
+}): ReactElement {
+  const [draft, setDraft] = useState<string | null>(null)
+  const rangeInputRef = useRef<HTMLInputElement>(null)
+  const lastNativeRangeValueRef = useRef<string>("")
+  const commitRangeRef = useRef<(raw: string) => void>(() => {})
+
+  const valueSyncKey = useMemo(
+    () => value.map(d => String(normalizeToStartOfDay(d).getTime())).join("|"),
+    [value]
+  )
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setDraft(null)
+    })
+  }, [valueSyncKey])
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setDraft(null)
+    })
+  }, [draftResetSeq])
+
+  useEffect(() => {
+    const el = rangeInputRef.current
+    if (!el) {
+      return
+    }
+    const syncNative = (): void => {
+      const v = el.value
+      lastNativeRangeValueRef.current = v
+      setDraft(v)
+    }
+    const tryCommitRangeNative = (): void => {
+      commitRangeRef.current(lastNativeRangeValueRef.current)
+    }
+    const onNativeInput = (_ev: Event): void => {
+      syncNative()
+      tryCommitRangeNative()
+    }
+    const onNativeChange = (): void => {
+      syncNative()
+      tryCommitRangeNative()
+    }
+    el.addEventListener("input", onNativeInput, { capture: true })
+    el.addEventListener("change", onNativeChange, { capture: true })
+    lastNativeRangeValueRef.current = el.value
+    return () => {
+      el.removeEventListener("input", onNativeInput, { capture: true })
+      el.removeEventListener("change", onNativeChange, { capture: true })
+    }
+  }, [valueSyncKey, draftResetSeq])
+
+  return (
+    <DatePicker.Context>
+      {dp => {
+        const fromState =
+          value.length >= 2
+            ? `${format(normalizeToStartOfDay(value[0]), dateFormat, {
+                locale: loadedLocale,
+              })}${RANGE_SEP}${format(
+                normalizeToStartOfDay(value[1]),
+                dateFormat,
+                {
+                  locale: loadedLocale,
+                }
+              )}`
+            : value.length === 1
+              ? format(normalizeToStartOfDay(value[0]), dateFormat, {
+                  locale: loadedLocale,
+                })
+              : ""
+
+        const shown = draft ?? fromState
+
+        const commitRange = (raw: string): void => {
+          const trimmed = raw.trim()
+          if (!trimmed) {
+            return
+          }
+          const parts = trimmed.split(/\s*[–-]\s*/)
+          if (parts.length < 2) {
+            return
+          }
+          const p0 = parts[0].trim()
+          const p1 = parts[1].trim()
+          if (
+            !isCompleteMomentDate(p0, momentFormat) ||
+            !isCompleteMomentDate(p1, momentFormat)
+          ) {
+            return
+          }
+          const d0 = normalizeToStartOfDay(
+            moment(p0, momentFormat, true).toDate()
+          )
+          const d1 = normalizeToStartOfDay(
+            moment(p1, momentFormat, true).toDate()
+          )
+          handleChange({ date: [d0, d1] })
+        }
+        commitRangeRef.current = commitRange
+
+        const handleRangeInputChangeLike = (
+          e: ChangeEvent<HTMLInputElement>
+        ): void => {
+          const v = e.currentTarget.value
+          setDraft(v)
+          if (v === "") {
+            setIsEmpty(true)
+          }
+          commitRange(v)
+        }
+
+        const handleRangeDateFieldFocus = (
+          e: FocusEvent<HTMLInputElement>
+        ): void => {
+          if (value.length === 0) {
+            return
+          }
+          const el = e.currentTarget
+          el.select()
+          if (!error) {
+            requestAnimationFrame(() => {
+              el.select()
+            })
+          }
+        }
+
+        const handleRangeKeyDown = (
+          e: KeyboardEvent<HTMLInputElement>
+        ): void => {
+          if (e.key === "Enter" || e.key === "NumpadEnter") {
+            e.preventDefault()
+            e.stopPropagation()
+            const el = e.currentTarget
+            const v = lastNativeRangeValueRef.current
+            commitRange(v)
+            el.blur()
+            return
+          }
+          if (e.key === "Escape") {
+            e.preventDefault()
+            e.stopPropagation()
+            dp.setOpen(false)
+            if (clearable) {
+              setDraft(null)
+              handleChange({ date: null })
+            } else if (error) {
+              setDraft(null)
+              commitEmptyRangeKeepError()
+            }
+          }
+        }
+
+        return (
+          <StyledRangeInput
+            ref={rangeInputRef}
+            $hasError={Boolean(error)}
+            data-testid="stDateInputField"
+            disabled={dp.disabled}
+            aria-label="Select a date."
+            value={shown}
+            placeholder={`${element.format}${RANGE_SEP}${element.format}`}
+            onClick={() => {
+              dp.setOpen(true)
+              requestAnimationFrame(() => {
+                rangeInputRef.current?.select()
+              })
+            }}
+            onFocus={handleRangeDateFieldFocus}
+            onChange={handleRangeInputChangeLike}
+            onBlur={e => {
+              const el = e.currentTarget
+              const raw = lastNativeRangeValueRef.current || el.value
+              setDraft(null)
+              const trimmed = raw.trim()
+              if (!trimmed) {
+                handleChange({ date: null })
+                handleClose()
+                return
+              }
+              commitRange(raw)
+            }}
+            onKeyDown={handleRangeKeyDown}
+          />
+        )
+      }}
+    </DatePicker.Context>
+  )
+}
+
+const StyledControl = styled(DatePicker.Control)(({ theme }) => ({
+  display: "flex",
+  alignItems: "center",
+  flexDirection: "row",
+  position: "relative",
+  width: "100%",
+  paddingRight: theme.spacing.twoXS,
+}))
+
+const StyledRangeInput = styled("input", {
+  shouldForwardProp: p => p !== "$hasError",
+})<{ $hasError: boolean }>(({ theme, $hasError }) => {
+  const { colors, fontWeights, lineHeights, sizes, spacing, zIndices } = theme
+  const unfocused = getBorderColor(colors, false)
+  const focused = getBorderColor(colors, true)
+  return {
+    flex: 1,
+    position: "relative",
+    zIndex: zIndices.priority,
+    fontWeight: fontWeights.normal,
+    borderLeftWidth: sizes.borderWidth,
+    borderRightWidth: sizes.borderWidth,
+    borderTopWidth: sizes.borderWidth,
+    borderBottomWidth: sizes.borderWidth,
+    borderStyle: "solid",
+    borderTopColor: unfocused,
+    borderRightColor: unfocused,
+    borderBottomColor: unfocused,
+    borderLeftColor: unfocused,
+    paddingRight: spacing.sm,
+    paddingLeft: `calc(${spacing.sm} + ${sizes.tagMarginInsideBorder})`,
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.sm,
+    lineHeight: lineHeights.inputWidget,
+    backgroundColor: colors.secondaryBg,
+    "::placeholder": { color: colors.fadedText60 },
+    "&:focus": {
+      borderTopColor: focused,
+      borderRightColor: focused,
+      borderBottomColor: focused,
+      borderLeftColor: focused,
+      outline: 0,
+    },
+    ...($hasError && {
+      color: colors.redTextColor,
+      backgroundColor: colors.redBackgroundColor,
+    }),
+  }
+})
+
+const StyledClearTrigger = styled(DatePicker.ClearTrigger)(({ theme }) => ({
+  color: theme.colors.grayTextColor,
+  padding: theme.spacing.threeXS,
+  height: theme.sizes.clearIconSize,
+  width: theme.sizes.clearIconSize,
+  lineHeight: theme.lineHeights.none,
+  border: "none",
+  background: "transparent",
+  cursor: "pointer",
+  ":hover": {
+    color: theme.colors.bodyText,
+  },
+}))
+
+const StyledContent = styled(DatePicker.Content)(({ theme }) => ({
+  ...getPopoverContainerStyle(theme),
+  ...(hasLightBackgroundColor(theme) && {
+    borderWidth: theme.spacing.none,
+  }),
+  fontSize: theme.fontSizes.sm,
+  padding: theme.spacing.sm,
+}))
+
+const StyledQuickSelect = styled("select")(({ theme }) => ({
+  width: "100%",
+  height: theme.sizes.minElementHeight,
+  marginBottom: theme.spacing.sm,
+  borderLeftWidth: theme.sizes.borderWidth,
+  borderRightWidth: theme.sizes.borderWidth,
+  borderTopWidth: theme.sizes.borderWidth,
+  borderBottomWidth: theme.sizes.borderWidth,
+}))
+
+const StyledViewControl = styled(DatePicker.ViewControl)(({ theme }) => ({
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: theme.spacing.sm,
+}))
 
 function getStateFromWidgetMgr(
   widgetMgr: WidgetStateManager,
@@ -575,7 +1148,6 @@ function updateWidgetMgrState(
   const maxDate = getMaxDate(element)
   let isValid = true
 
-  // Check if date(s) outside of allowed min/max
   const normalizedStateValues = (vws.value || []).map(d =>
     normalizeToStartOfDay(d)
   )
@@ -584,7 +1156,6 @@ function updateWidgetMgrState(
     isValid = false
   }
 
-  // Only update widget state if date(s) valid
   if (isValid) {
     widgetMgr.setStringArrayValue(
       element,
