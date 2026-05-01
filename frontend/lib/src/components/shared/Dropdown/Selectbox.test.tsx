@@ -120,6 +120,8 @@ describe("Selectbox widget", () => {
 
   it("renders options", async () => {
     const user = userEvent.setup()
+    // No selection: opening via the input uses an empty filter so all options appear.
+    props = getProps({ value: undefined })
     render(<Selectbox {...props} />)
     const selectbox = screen.getByRole("combobox")
     await user.click(selectbox)
@@ -141,9 +143,9 @@ describe("Selectbox widget", () => {
 
   it("is able to select an option", async () => {
     const user = userEvent.setup()
+    props = getProps({ value: undefined })
     render(<Selectbox {...props} />)
     const selectbox = screen.getByRole("combobox")
-    // Open the dropdown
     await user.click(selectbox)
     const options = screen.getAllByRole("option")
     await user.click(options[2])
@@ -167,6 +169,8 @@ describe("Selectbox widget", () => {
     render(<Selectbox {...props} />)
     const selectbox = screen.getByRole("combobox")
 
+    await user.click(selectbox)
+    await user.clear(selectbox)
     await user.type(selectbox, "b")
     let options = screen.getAllByRole("option")
     expect(options).toHaveLength(1)
@@ -419,11 +423,13 @@ describe("Selectbox widget with optional props", () => {
     const props = getProps({
       options: ["aa", "Aa", "aA"],
       acceptNewOptions: true,
+      value: null,
     })
     render(<Selectbox {...props} />)
     const selectboxInput = screen.getByRole("combobox")
 
-    await user.type(selectboxInput, "AA")
+    await user.click(selectboxInput)
+    await user.type(selectboxInput, "AA", { skipClick: true })
 
     expect(screen.getByText("Add: AA")).toBeInTheDocument()
   })

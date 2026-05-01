@@ -14,8 +14,15 @@
  * limitations under the License.
  */
 
-import { Children, forwardRef, ReactElement } from "react"
+import {
+  Children,
+  CSSProperties,
+  forwardRef,
+  ReactElement,
+  ReactNode,
+} from "react"
 
+import styled from "@emotion/styled"
 import {
   type OptionListProps,
   StyledEmptyState,
@@ -36,6 +43,25 @@ import { ThemedStyledDropdownListItem } from "./styled-components"
 // Constants for special dropdown option IDs used by Multiselect
 export const SELECT_ALL_ID = "__SELECT_ALL__"
 export const SELECT_MATCHES_ID = "__SELECT_MATCHES__"
+
+/** List root for Selectbox virtual list (no BaseWeb menu primitives). */
+const SelectboxVirtualListRoot = styled.ul(({ theme }) => ({
+  listStyle: "none",
+  margin: 0,
+  paddingTop: theme.spacing.none,
+  paddingBottom: theme.spacing.none,
+  paddingLeft: theme.spacing.none,
+  paddingRight: theme.spacing.none,
+  boxShadow: "none",
+}))
+
+/** Row data for Base UI Combobox + react-window virtualization (Selectbox). */
+export interface SelectboxVirtualRow {
+  id: string
+  value: string
+  label: string
+  isCreatable?: boolean
+}
 
 /*
  * A component that renders a large dropdown to render only a fixed amount of
@@ -83,6 +109,32 @@ function FixedSizeListItem(props: FixedSizeListItemProps): ReactElement {
 
 interface VirtualDropdownProps {
   children?: React.ReactNode
+  /** Base UI Selectbox path: virtualize explicit rows (e.g. Combobox.Item cells). */
+  selectboxVirtualRows?: SelectboxVirtualRow[]
+  /** When set (e.g. dropdown open), avoids duplicate test ids across closed popovers. */
+  selectboxListDataTestId?: string
+  renderSelectboxRow?: (args: {
+    row: SelectboxVirtualRow
+    index: number
+    style: CSSProperties
+  }) => ReactNode
+}
+
+interface SelectboxFixedListItemProps {
+  data: {
+    rows: SelectboxVirtualRow[]
+    renderSelectboxRow: VirtualDropdownProps["renderSelectboxRow"]
+  }
+  index: number
+  style: CSSProperties
+}
+
+function SelectboxFixedListItem(
+  props: SelectboxFixedListItemProps
+): ReactElement {
+  const { data, index, style } = props
+  const row = data.rows[index]
+  return <>{data.renderSelectboxRow?.({ row, index, style })}</>
 }
 
 const VirtualDropdown = forwardRef<HTMLUListElement, VirtualDropdownProps>(
@@ -90,6 +142,52 @@ const VirtualDropdown = forwardRef<HTMLUListElement, VirtualDropdownProps>(
     const theme = useEmotionTheme()
     const scrollbarGutterSize = useScrollbarGutterSize()
     const { innerHeight: windowHeight } = useWindowDimensionsContext()
+
+    if (props.selectboxVirtualRows && props.renderSelectboxRow) {
+      const rows = props.selectboxVirtualRows
+      const maxHeight = Math.min(
+        convertRemToPx(theme.sizes.maxDropdownHeight),
+        windowHeight * 0.7
+      )
+      const contentHeight =
+        rows.length * convertRemToPx(theme.sizes.dropdownItemHeight)
+      const height = Math.min(maxHeight, contentHeight)
+      const hasScrollbar = contentHeight > maxHeight
+      const effectiveGutterSize = hasScrollbar ? scrollbarGutterSize : 0
+      const itemSize = convertRemToPx(theme.sizes.dropdownItemHeight)
+      const itemData = {
+        rows,
+        renderSelectboxRow: props.renderSelectboxRow,
+      }
+
+      return (
+        <SelectboxVirtualListRoot
+          ref={ref}
+          {...(props.selectboxListDataTestId
+            ? { "data-testid": props.selectboxListDataTestId }
+            : {})}
+        >
+          <FixedSizeList
+            width="100%"
+            height={height}
+            itemCount={rows.length}
+            itemData={itemData}
+            itemKey={(index: number, data: typeof itemData) =>
+              data.rows[index].id
+            }
+            itemSize={itemSize}
+            initialScrollOffset={0}
+            style={
+              {
+                "--scrollbar-gutter-size": `${effectiveGutterSize}px`,
+              } as React.CSSProperties
+            }
+          >
+            {SelectboxFixedListItem}
+          </FixedSizeList>
+        </SelectboxVirtualListRoot>
+      )
+    }
 
     // TODO: Update to match React best practices
     // eslint-disable-next-line @eslint-react/no-children-to-array
@@ -114,7 +212,7 @@ const VirtualDropdown = forwardRef<HTMLUListElement, VirtualDropdownProps>(
             overflow: "hidden",
           }}
           ref={ref}
-          data-testid="stSelectboxVirtualDropdownEmpty"
+          data-testid="stMultiselectVirtualDropdownEmpty"
         >
           <StyledEmptyState
             $style={{
@@ -171,7 +269,7 @@ const VirtualDropdown = forwardRef<HTMLUListElement, VirtualDropdownProps>(
           // one on the popover, so we need to remove it here.
           boxShadow: "none",
         }}
-        data-testid="stSelectboxVirtualDropdown"
+        data-testid="stMultiselectVirtualDropdown"
       >
         <FixedSizeList
           width="100%"
