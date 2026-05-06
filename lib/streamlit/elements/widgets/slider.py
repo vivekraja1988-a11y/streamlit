@@ -54,11 +54,13 @@ from streamlit.runtime.metrics_util import gather_metrics
 from streamlit.runtime.scriptrunner import ScriptRunContext, get_script_run_ctx
 from streamlit.runtime.state import (
     BindOption,
+    OnChangeMode,
     WidgetArgs,
     WidgetCallback,
     WidgetKwargs,
     get_session_state,
     register_widget,
+    validate_on_change_mode,
 )
 
 if TYPE_CHECKING:
@@ -255,7 +257,7 @@ class SliderMixin:
         format: str | NumberFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         *,
@@ -278,7 +280,7 @@ class SliderMixin:
         format: str | NumberFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         *,
@@ -302,7 +304,7 @@ class SliderMixin:
         format: str | NumberFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         disabled: bool = False,
@@ -324,7 +326,7 @@ class SliderMixin:
         format: str | NumberFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         *,
@@ -347,7 +349,7 @@ class SliderMixin:
         format: str | DateTimeFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         *,
@@ -371,7 +373,7 @@ class SliderMixin:
         format: str | DateTimeFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         disabled: bool = False,
@@ -393,7 +395,7 @@ class SliderMixin:
         format: str | DateTimeFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         disabled: bool = False,
@@ -418,7 +420,7 @@ class SliderMixin:
         format: str | DateTimeFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         disabled: bool = False,
@@ -441,7 +443,7 @@ class SliderMixin:
         format: str | DateTimeFormat | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         *,
@@ -463,7 +465,7 @@ class SliderMixin:
         format: str | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         *,  # keyword-only arguments:
@@ -621,8 +623,19 @@ class SliderMixin:
             including the Markdown directives described in the ``body``
             parameter of ``st.markdown``.
 
-        on_change : callable
-            An optional callback invoked when this slider's value changes.
+        on_change : "rerun", "ignore", or callable
+            How the slider should respond to value changes. This controls
+            whether or not the slider triggers a rerun and if a callback
+            function is called. This can be one of the following values:
+
+            - ``"rerun"`` (default): The slider value changes and the app
+              reruns. No callback function is called.
+
+            - ``"ignore"``: The slider value changes and the app doesn't
+              rerun. No callback function is called.
+
+            - A ``callable``: The slider value changes and the app reruns.
+              The callable is called before the rest of the app.
 
         args : list or tuple
             An optional list or tuple of args to pass to the callback.
@@ -747,7 +760,7 @@ class SliderMixin:
         format: str | None = None,
         key: Key | None = None,
         help: str | None = None,
-        on_change: WidgetCallback | None = None,
+        on_change: WidgetCallback | OnChangeMode | None = "rerun",
         args: WidgetArgs | None = None,
         kwargs: WidgetKwargs | None = None,
         *,  # keyword-only arguments:
@@ -759,13 +772,24 @@ class SliderMixin:
     ) -> SliderReturn:
         key = to_key(key)
 
+        # Determine if on_change is a callback or a mode string
+        is_callback = callable(on_change)
+
         check_widget_policies(
             self.dg,
             key,
-            on_change,
+            cast("WidgetCallback | None", on_change) if is_callback else None,
             default_value=value,
+            enable_check_callback_rules=is_callback,
         )
         maybe_raise_label_warnings(label, label_visibility)
+
+        # Validate on_change mode early, before any expensive setup.
+        validate_on_change_mode(on_change)
+
+        on_change_callback: WidgetCallback | None = None
+        if callable(on_change):
+            on_change_callback = on_change
 
         element_id = compute_and_register_element_id(
             "slider",
@@ -1054,6 +1078,10 @@ class SliderMixin:
         if bind and key:
             slider_proto.query_param_key = str(key)
 
+        # Set ignore_rerun flag on proto if mode is "ignore"
+        if on_change == "ignore":
+            slider_proto.ignore_rerun = True
+
         serde = SliderSerde(
             prepared_value,
             data_type,
@@ -1067,7 +1095,7 @@ class SliderMixin:
 
         widget_state = register_widget(
             slider_proto.id,
-            on_change_handler=on_change,
+            on_change_handler=on_change_callback,
             args=args,
             kwargs=kwargs,
             deserializer=serde.deserialize,

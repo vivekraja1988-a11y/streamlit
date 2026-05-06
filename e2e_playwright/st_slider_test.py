@@ -38,7 +38,7 @@ from e2e_playwright.shared.app_utils import (
     tab_until_focused,
 )
 
-NUM_SLIDER_WIDGETS = 37
+NUM_SLIDER_WIDGETS = 38
 
 
 def test_slider_rendering(themed_app: Page, assert_snapshot: ImageCompareFunction):
@@ -661,3 +661,38 @@ def test_slider_ui_value_wins_on_rerun_and_syncs_url(page: Page, app_base_url: s
 
     expect_prefixed_markdown(page, "Bound ss value:", "76")
     expect(page).to_have_url(re.compile(r"bound_ss=76"))
+
+
+def test_slider_on_change_ignore(app: Page):
+    """Test that on_change='ignore' suppresses rerun and sends value on next rerun."""
+    expect(app.get_by_text("Runs: 1")).to_be_visible()
+    expect_prefixed_markdown(app, "Ignore slider value:", "25")
+
+    slider = get_element_by_key(app, "ignore_slider")
+    slider_role = slider.get_by_role("slider")
+
+    # Change slider value - should NOT trigger a rerun
+    slider_role.press("ArrowRight")
+
+    # Wait for any potential rerun to complete. If on_change="ignore" is working
+    # correctly, no rerun will occur, but this ensures that if a bug causes
+    # a rerun, we wait for it before checking.
+    wait_for_app_run(app)
+
+    # Verify no rerun occurred (run count should still be 1)
+    expect(app.get_by_text("Runs: 1")).to_be_visible()
+    expect(app.get_by_text("Runs: 2")).not_to_be_visible()
+
+    # Increment value further (from 26 to 30)
+    for _ in range(4):
+        slider_role.press("ArrowRight")
+
+    # Click button to trigger a rerun - accumulated value should be sent
+    app.get_by_role("button", name="Apply ignore slider", exact=True).click()
+    wait_for_app_run(app)
+
+    # Verify the updated value is now visible
+    expect(app.get_by_text("Ignore slider value: 30", exact=True)).to_be_visible()
+    expect(
+        app.get_by_text("Applied ignore slider value: 30", exact=True)
+    ).to_be_visible()

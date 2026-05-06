@@ -34,6 +34,7 @@ from typing import (
 from streamlit import util
 from streamlit.errors import (
     StreamlitAPIException,
+    StreamlitValueError,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +51,11 @@ T_co = TypeVar("T_co", covariant=True)
 WidgetArgs: TypeAlias = tuple[Any, ...] | list[Any]
 WidgetKwargs: TypeAlias = dict[str, Any]
 WidgetCallback: TypeAlias = Callable[..., None]
+
+# Type for the on_change/on_click mode parameter
+# "rerun" (default): triggers a rerun when the widget value changes
+# "ignore": stores the value without triggering a rerun
+OnChangeMode: TypeAlias = Literal["rerun", "ignore"]
 
 # Type for the bind parameter on widgets
 # Currently only supports binding to query params
@@ -254,3 +260,30 @@ def require_valid_user_key(key: str) -> None:
         raise StreamlitAPIException(
             f"Keys beginning with {GENERATED_ELEMENT_ID_PREFIX} are reserved."
         )
+
+
+def validate_on_change_mode(on_change: WidgetCallback | OnChangeMode | None) -> None:
+    """Validate the on_change parameter for widgets that support mode strings.
+
+    Widgets that support on_change="ignore" or on_change="rerun" should call this
+    function early in their implementation to validate the on_change parameter.
+
+    Parameters
+    ----------
+    on_change
+        The on_change parameter value from the widget call. Can be:
+        - None: No callback, default rerun behavior
+        - A callable: The callback function to execute on change
+        - "rerun": Explicit rerun mode (same as default)
+        - "ignore": Store value without triggering a rerun
+
+    Raises
+    ------
+    StreamlitValueError
+        If on_change is not None, not callable, and not a valid mode string.
+    """
+    if on_change is None or callable(on_change):
+        return
+
+    if not isinstance(on_change, str) or on_change not in {"ignore", "rerun"}:
+        raise StreamlitValueError("on_change", ["'rerun'", "'ignore'", "a callable"])
