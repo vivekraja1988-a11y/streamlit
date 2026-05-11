@@ -14,7 +14,20 @@
  * limitations under the License.
  */
 
-import { ReactElement, useContext } from "react"
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
+import type {
+  ReactElement,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+} from "react"
 
 import classNames from "classnames"
 
@@ -40,6 +53,7 @@ import Expander from "~lib/components/elements/Expander/Expander"
 import Popover from "~lib/components/elements/Popover/Popover"
 import Tabs from "~lib/components/elements/Tabs/Tabs"
 import type { TabProps } from "~lib/components/elements/Tabs/Tabs"
+import { useWindowDimensionsContext } from "~lib/components/shared/WindowDimensions/useWindowDimensionsContext"
 import Form from "~lib/components/widgets/Form/Form"
 import { useEmotionTheme } from "~lib/hooks/useEmotionTheme"
 import { useScrollToBottom } from "~lib/hooks/useScrollToBottom"
@@ -51,6 +65,7 @@ import {
   StyledFlexContainerBlock,
   StyledFlexContainerBlockProps,
   StyledLayoutWrapper,
+  StyledResizableColumnHandle,
 } from "./styled-components"
 import {
   assignDividerColor,
@@ -66,12 +81,31 @@ import {
   shouldComponentBeEnabled,
 } from "./utils"
 
+const MIN_RESIZABLE_COLUMN_WIDTH_PX = 64
+const KEYBOARD_RESIZE_STEP_PX = 10
+
 const ChildRenderer = (props: BlockPropsWithoutWidth): ReactElement => {
   // Handle cycling of colors for dividers:
   assignDividerColor(props.node, useEmotionTheme())
 
   return <>{RenderNodeVisitor.collectReactElements(props)}</>
 }
+
+/**
+ * Returns true if the block has resizable columns.
+ * Note: This requires *all* child blocks to have `resizable: true` on their
+ * column proto. A single non-resizable child disables resizing for the entire
+ * group. This matches the Python API where `resizable` is set uniformly on
+ * all columns in an `st.columns()` call.
+ */
+const hasResizableColumns = (node: BlockNode): boolean =>
+  Boolean(
+    node.children?.length &&
+    getDirectionOfBlock(node.deltaBlock) === Direction.HORIZONTAL &&
+    node.children.every(
+      child => child instanceof BlockNode && child.deltaBlock.column?.resizable
+    )
+  )
 
 /**
  * Extract only layout-relevant fields from a block submessage to satisfy
@@ -150,6 +184,238 @@ export const ContainerContentsWrapper = (
   )
 }
 
+type ResizableColumnsBlockProps = BlockPropsWithoutWidth
+
+const ResizableColumnsBlock = (
+  props: ResizableColumnsBlockProps
+): ReactElement => {
+  const theme = useEmotionTheme()
+  const { innerWidth } = useWindowDimensionsContext()
+  const columns = useMemo(
+    () => props.node.children.filter(child => child instanceof BlockNode),
+    [props.node.children]
+  )
+  const isNarrowLayout =
+    innerWidth <= Number.parseInt(theme.breakpoints.columns, 10)
+  const columnElementsRef = useRef<Array<HTMLDivElement | null>>([])
+  const dragStateRef = useRef<{
+    index: number
+    startX: number
+    startWidths: number[]
+  } | null>(null)
+  const [columnWidths, setColumnWidths] = useState<number[] | null>(null)
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+
+  // Track previous values to detect when re-measurement is needed
+  const prevColumnsLengthRef = useRef(columns.length)
+  const prevInnerWidthRef = useRef(innerWidth)
+
+  useLayoutEffect(() => {
+    // Reset and re-measure when columns configuration or window width changes
+    const needsReset =
+      prevColumnsLengthRef.current !== columns.length ||
+      prevInnerWidthRef.current !== innerWidth
+
+    prevColumnsLengthRef.current = columns.length
+    prevInnerWidthRef.current = innerWidth
+
+    if (isNarrowLayout) {
+      if (columnWidths !== null) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- DOM measurement sync: reset widths when layout changes
+        setColumnWidths(null)
+      }
+      return
+    }
+
+    if (needsReset && columnWidths !== null) {
+      // Configuration changed while we have measured widths; clear them and
+      // return early so the next effect cycle measures the natural flex-based
+      // widths (not stale pixel overrides from widthOverride).
+
+      setColumnWidths(null)
+      return
+    }
+
+    if (columnWidths) {
+      // Widths already set and no reset needed
+      return
+    }
+
+    const measuredWidths = columns.map((_, index) => {
+      const columnElement = columnElementsRef.current[index]
+      if (!columnElement) {
+        return 0
+      }
+
+      // eslint-disable-next-line streamlit-custom/no-force-reflow-access -- Initial measurements are required so dragging preserves the row width instead of wrapping columns.
+      return columnElement.getBoundingClientRect().width
+    })
+
+    if (measuredWidths.every(width => width > 0)) {
+      setColumnWidths(measuredWidths)
+    }
+  }, [columnWidths, columns, isNarrowLayout, innerWidth])
+
+  useEffect(() => {
+    if (draggingIndex === null) {
+      return
+    }
+
+    // Set body cursor to prevent flickering when mouse moves faster than handle
+    const previousCursor = document.body.style.cursor
+    document.body.style.cursor = "col-resize"
+
+    const handleMouseMove = (event: MouseEvent): void => {
+      const dragState = dragStateRef.current
+      if (!dragState) {
+        return
+      }
+
+      const pairWidth =
+        dragState.startWidths[dragState.index] +
+        dragState.startWidths[dragState.index + 1]
+      const nextLeftWidth = Math.min(
+        Math.max(
+          dragState.startWidths[dragState.index] +
+            (event.clientX - dragState.startX),
+          MIN_RESIZABLE_COLUMN_WIDTH_PX
+        ),
+        pairWidth - MIN_RESIZABLE_COLUMN_WIDTH_PX
+      )
+      const nextWidths = [...dragState.startWidths]
+      nextWidths[dragState.index] = nextLeftWidth
+      nextWidths[dragState.index + 1] = pairWidth - nextLeftWidth
+      setColumnWidths(nextWidths)
+    }
+
+    const handleMouseUp = (): void => {
+      dragStateRef.current = null
+      setDraggingIndex(null)
+    }
+
+    window.addEventListener("mousemove", handleMouseMove)
+    window.addEventListener("mouseup", handleMouseUp)
+
+    return () => {
+      document.body.style.cursor = previousCursor
+      window.removeEventListener("mousemove", handleMouseMove)
+      window.removeEventListener("mouseup", handleMouseUp)
+    }
+  }, [draggingIndex])
+
+  /**
+   * Adjusts adjacent column widths by a given delta in pixels.
+   * The left column grows/shrinks by delta and the right column
+   * compensates to maintain total width.
+   */
+  const adjustColumnWidths = useCallback(
+    (index: number, delta: number): void => {
+      if (!columnWidths || index >= columnWidths.length - 1) {
+        return
+      }
+
+      const pairWidth = columnWidths[index] + columnWidths[index + 1]
+      const nextLeftWidth = Math.min(
+        Math.max(columnWidths[index] + delta, MIN_RESIZABLE_COLUMN_WIDTH_PX),
+        pairWidth - MIN_RESIZABLE_COLUMN_WIDTH_PX
+      )
+      const nextWidths = [...columnWidths]
+      nextWidths[index] = nextLeftWidth
+      nextWidths[index + 1] = pairWidth - nextLeftWidth
+      setColumnWidths(nextWidths)
+    },
+    [columnWidths]
+  )
+
+  return (
+    <>
+      {columns.map((columnNode, index): ReactElement => {
+        const column = columnNode.deltaBlock.column
+        const gap = getColumnGapSize(column ?? {})
+        const canResize =
+          !isNarrowLayout &&
+          columnWidths !== null &&
+          columnWidths.length === columns.length &&
+          index < columns.length - 1
+
+        const handleResizeStart = (
+          event: ReactMouseEvent<HTMLDivElement>
+        ): void => {
+          if (
+            columnWidths?.length !== columns.length ||
+            index >= columnWidths.length - 1
+          ) {
+            return
+          }
+
+          event.preventDefault()
+          dragStateRef.current = {
+            index,
+            startX: event.clientX,
+            startWidths: [...columnWidths],
+          }
+          setDraggingIndex(index)
+        }
+
+        const handleKeyDown = (
+          event: ReactKeyboardEvent<HTMLDivElement>
+        ): void => {
+          if (event.key === "ArrowLeft") {
+            event.preventDefault()
+            adjustColumnWidths(index, -KEYBOARD_RESIZE_STEP_PX)
+          } else if (event.key === "ArrowRight") {
+            event.preventDefault()
+            adjustColumnWidths(index, KEYBOARD_RESIZE_STEP_PX)
+          }
+        }
+
+        return (
+          <StyledColumn
+            key={columnNode.deltaBlock.id || index}
+            ref={(columnElementRef): void => {
+              columnElementsRef.current[index] = columnElementRef
+            }}
+            weight={column?.weight ?? 0}
+            widthOverride={columnWidths?.[index]}
+            gap={gap}
+            verticalAlignment={column?.verticalAlignment ?? undefined}
+            showBorder={column?.showBorder ?? false}
+            isResizable={canResize}
+            className="stColumn"
+            data-testid="stColumn"
+          >
+            <ContainerContentsWrapper
+              {...props}
+              node={columnNode}
+              height="100%"
+              disableFullscreenMode={props.disableFullscreenMode}
+            />
+            {canResize && (
+              <StyledResizableColumnHandle
+                gap={gap}
+                data-testid="stColumnResizeHandle"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize column"
+                aria-valuenow={Math.round(
+                  (columnWidths[index] /
+                    (columnWidths[index] + columnWidths[index + 1])) *
+                    100
+                )}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                tabIndex={0}
+                onMouseDown={handleResizeStart}
+                onKeyDown={handleKeyDown}
+              />
+            )}
+          </StyledColumn>
+        )
+      })}
+    </>
+  )
+}
+
 interface FlexBoxContainerProps extends BaseBlockProps {
   node: BlockNode
 }
@@ -200,6 +466,7 @@ export const FlexBoxContainer = (
   const hasFixedWidth =
     (props.node.deltaBlock.widthConfig?.pixelWidth ?? 0) > 0 ||
     (props.node.deltaBlock.widthConfig?.remWidth ?? 0) > 0
+  const renderResizableColumns = hasResizableColumns(props.node)
 
   return (
     <FlexContextProvider
@@ -221,7 +488,16 @@ export const FlexBoxContainer = (
           activateScrollToBottom ? "scroll-to-bottom" : "normal"
         }
       >
-        <ChildRenderer {...props} />
+        {/* Note: ResizableColumnsBlock renders StyledColumn directly, bypassing
+            BlockNodeRenderer. This means column rendering logic exists in two places:
+            - BlockNodeRenderer (normal columns, see column handling below)
+            - ResizableColumnsBlock (resizable columns)
+            Future changes to column rendering may need to update both locations. */}
+        {renderResizableColumns ? (
+          <ResizableColumnsBlock {...props} />
+        ) : (
+          <ChildRenderer {...props} />
+        )}
       </StyledFlexContainerBlock>
     </FlexContextProvider>
   )
@@ -382,14 +658,13 @@ export const BlockNodeRenderer = (
   }
 
   if (node.deltaBlock.column) {
+    const column = node.deltaBlock.column
     return (
       <StyledColumn
-        weight={node.deltaBlock.column.weight ?? 0}
-        gap={getColumnGapSize(node.deltaBlock.column)}
-        verticalAlignment={
-          node.deltaBlock.column.verticalAlignment ?? undefined
-        }
-        showBorder={node.deltaBlock.column.showBorder ?? false}
+        weight={column.weight ?? 0}
+        gap={getColumnGapSize(column)}
+        verticalAlignment={column.verticalAlignment ?? undefined}
+        showBorder={column.showBorder ?? false}
         className="stColumn"
         data-testid="stColumn"
       >
