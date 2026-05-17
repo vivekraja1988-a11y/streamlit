@@ -188,6 +188,7 @@ def test_singleton_init_raises_when_already_initialized() -> None:
             expander_container_cls=DeltaGenerator,
             tab_container_cls=DeltaGenerator,
             popover_container_cls=DeltaGenerator,
+            accordion_container_cls=DeltaGenerator,
         )
 
 

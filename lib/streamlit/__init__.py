@@ -87,6 +87,9 @@ from streamlit.elements.lib.mutable_tab_container import TabContainer as _TabCon
 from streamlit.elements.lib.mutable_popover_container import (
     PopoverContainer as _PopoverContainer,
 )
+from streamlit.elements.lib.mutable_accordion_container import (
+    AccordionContainer as _AccordionContainer,
+)
 
 # instantiate the DeltaGeneratorSingleton
 _dg_singleton = _DeltaGeneratorSingleton(
@@ -96,6 +99,7 @@ _dg_singleton = _DeltaGeneratorSingleton(
     expander_container_cls=_ExpanderContainer,
     tab_container_cls=_TabContainer,
     popover_container_cls=_PopoverContainer,
+    accordion_container_cls=_AccordionContainer,
 )
 _main: _DeltaGenerator = _dg_singleton._main_dg
 sidebar: _DeltaGenerator = _dg_singleton._sidebar_dg
@@ -196,6 +200,7 @@ checkbox = _main.checkbox
 code = _main.code
 columns = _main.columns
 tabs = _main.tabs
+accordion = _main.accordion
 container = _main.container
 dataframe = _main.dataframe
 data_editor = _main.data_editor
