@@ -1443,6 +1443,12 @@ def assert_snapshot(
                 "comparisons too permissive."
             )
 
+        if isinstance(element, Locator):
+            expect(element).to_be_visible()
+
+        if not isinstance(element, Page):
+            element.scroll_into_view_if_needed()
+
         if show_app_header is False or (
             show_app_header is None and not isinstance(element, Page)
         ):
