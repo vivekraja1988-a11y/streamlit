@@ -33,6 +33,7 @@ from streamlit.elements.lib.utils import (
     to_key,
 )
 from streamlit.elements.widgets.file_uploader import _get_upload_files
+from streamlit.errors import StreamlitAPIException
 from streamlit.proto.CameraInput_pb2 import CameraInput as CameraInputProto
 from streamlit.proto.Common_pb2 import FileUploaderState as FileUploaderStateProto
 from streamlit.proto.Common_pb2 import UploadedFileInfo as UploadedFileInfoProto
@@ -95,6 +96,7 @@ class CameraInputMixin:
         *,  # keyword-only arguments:
         disabled: bool = False,
         label_visibility: LabelVisibility = "visible",
+        size: tuple[int, int] | None = None,
         width: WidthWithoutContent = "stretch",
     ) -> UploadedFile | None:
         r"""Display a widget that returns pictures from the user's webcam.
@@ -162,6 +164,12 @@ class CameraInputMixin:
             An optional boolean that disables the camera input if set to
             ``True``. Default is ``False``.
 
+        size : tuple of (width, height) or None
+            The desired resolution of the captured image in pixels.
+            If specified, the camera will attempt to capture at this
+            resolution. If ``None`` (default), the capture resolution
+            is determined by the widget size.
+
         label_visibility : "visible", "hidden", or "collapsed"
             The visibility of the label. The default is ``"visible"``. If this
             is ``"hidden"``, Streamlit displays an empty spacer instead of the
@@ -211,6 +219,7 @@ class CameraInputMixin:
             kwargs=kwargs,
             disabled=disabled,
             label_visibility=label_visibility,
+            size=size,
             width=width,
             ctx=ctx,
         )
@@ -226,6 +235,7 @@ class CameraInputMixin:
         *,  # keyword-only arguments:
         disabled: bool = False,
         label_visibility: LabelVisibility = "visible",
+        size: tuple[int, int] | None = None,
         width: WidthWithoutContent = "stretch",
         ctx: ScriptRunContext | None = None,
     ) -> UploadedFile | None:
@@ -258,6 +268,18 @@ class CameraInputMixin:
         camera_input_proto.label_visibility.value = get_label_visibility_proto_value(
             label_visibility
         )
+
+        if size is not None:
+            if len(size) != 2:
+                raise StreamlitAPIException(
+                    "size must be a tuple of exactly 2 integers (width, height)."
+                )
+            if size[0] <= 0 or size[1] <= 0:
+                raise StreamlitAPIException(
+                    "size must be a tuple of positive integers (width, height)."
+                )
+            camera_input_proto.camera_width = size[0]
+            camera_input_proto.camera_height = size[1]
 
         if help is not None:
             camera_input_proto.help = dedent(help)
