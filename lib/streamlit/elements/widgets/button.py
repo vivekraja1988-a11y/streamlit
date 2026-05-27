@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import io
+import mimetypes
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -87,6 +88,7 @@ DownloadButtonDataType: TypeAlias = (
     | TextIO
     | BinaryIO
     | io.RawIOBase
+    | os.PathLike[str]
     | Callable[[], str | bytes | TextIO | BinaryIO | io.RawIOBase]
 )
 
@@ -452,13 +454,18 @@ class ButtonMixin:
             .. |st.markdown| replace:: ``st.markdown``
             .. _st.markdown: https://docs.streamlit.io/develop/api-reference/text/st.markdown
 
-        data : str, bytes, file-like, or callable
+        data : str, bytes, file-like, Path, or callable
             The contents of the file to be downloaded or a callable that
             returns the contents of the file.
 
             File contents can be a string, bytes, or file-like object.
             File-like objects include ``io.BytesIO``, ``io.StringIO``, or any
             class that implements the abstract base class ``io.RawIOBase``.
+
+            You can also pass a :class:`pathlib.Path` object to download a
+            local file by path. When a path is passed, ``file_name`` and
+            ``mime`` are automatically inferred from the file name and
+            extension if not explicitly provided.
 
             If a callable is passed, it is executed when the user clicks
             the download button and runs on a separate thread from the
@@ -470,6 +477,12 @@ class ButtonMixin:
             To prevent unnecessary recomputation, use caching when converting
             your data for download. For more information, see the Example 1
             below.
+
+            .. note::
+                When passing a file path via :class:`pathlib.Path`, the file is
+                read into memory during widget rendering on each script rerun.
+                For large files, prefer the callable form to avoid loading the
+                file into memory until the user clicks the download button.
 
         file_name: str
             An optional string to use as the name of the file to be downloaded,
@@ -719,6 +732,16 @@ class ButtonMixin:
         Remember to specify the MIME type if you don't want the default
         type of ``"application/octet-stream"`` for generic binary data. In the
         example below, the MIME type is set to ``"image/png"`` for a PNG file.
+
+        Alternatively, you can pass a :class:`pathlib.Path` object:
+
+        >>> import streamlit as st
+        >>> from pathlib import Path
+        >>>
+        >>> st.download_button(
+        ...     label="Download image",
+        ...     data=Path("flower.png"),
+        ... )
 
         >>> import streamlit as st
         >>>
@@ -1336,6 +1359,22 @@ class ButtonMixin:
         normalized_shortcut: str | None = None
         if shortcut is not None:
             normalized_shortcut = normalize_shortcut(shortcut)
+
+        if isinstance(data, os.PathLike):
+            path_str = os.fspath(data)
+            if file_name is None:
+                file_name = os.path.basename(path_str)
+            if mime is None:
+                guessed_mime, _ = mimetypes.guess_type(path_str)
+                if guessed_mime is not None:
+                    mime = guessed_mime
+            try:
+                with open(path_str, "rb") as f:
+                    data = f.read()
+            except (FileNotFoundError, PermissionError) as e:
+                raise StreamlitAPIException(
+                    f"Path does not exist or is not readable: {path_str}"
+                ) from e
 
         check_widget_policies(
             self.dg,
