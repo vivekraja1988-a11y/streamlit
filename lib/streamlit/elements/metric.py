@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Final, Literal, TypeAlias, cast
@@ -141,6 +142,7 @@ class MetricMixin:
             to the delta, oriented according to its sign:
 
             - If the delta is ``None`` or an empty string, no arrow is shown.
+            - If the delta is zero, no arrow is shown and the delta is gray.
             - If the delta is a negative number or starts with a minus sign,
               the arrow points down and the delta is red.
             - Otherwise, the arrow points up and the delta is green.
@@ -486,12 +488,13 @@ def _determine_delta_color_and_direction(
             direction=MetricProto.MetricDirection.NONE,
         )
 
-    # Determine direction based on delta sign
-    cd_direction = (
-        MetricProto.MetricDirection.DOWN
-        if _is_negative_delta(delta)
-        else MetricProto.MetricDirection.UP
-    )
+    # Determine direction based on delta
+    if _is_zero_delta(delta):
+        cd_direction = MetricProto.MetricDirection.NONE
+    elif _is_negative_delta(delta):
+        cd_direction = MetricProto.MetricDirection.DOWN
+    else:
+        cd_direction = MetricProto.MetricDirection.UP
 
     # Handle explicit color names
     if delta_color in _DELTA_COLOR_TO_PROTO:
@@ -502,7 +505,11 @@ def _determine_delta_color_and_direction(
 
     # Handle "normal", "inverse", "off" modes
     is_negative = cd_direction == MetricProto.MetricDirection.DOWN
-    if delta_color == "normal":
+    is_zero = cd_direction == MetricProto.MetricDirection.NONE
+
+    if is_zero:
+        cd_color = MetricProto.MetricColor.GRAY
+    elif delta_color == "normal":
         cd_color = (
             MetricProto.MetricColor.RED
             if is_negative
@@ -525,3 +532,16 @@ def _determine_delta_color_and_direction(
 
 def _is_negative_delta(delta: Delta) -> bool:
     return dedent(str(delta)).startswith("-")
+
+
+def _is_zero_delta(delta: Delta) -> bool:
+    if delta is None or delta == "":
+        return False
+    try:
+
+        delta_str = dedent(str(delta)).strip()
+        match = re.match(r"[+-]?\d*\.?\d+", delta_str)
+        return bool(match and float(match.group()) == 0)
+
+    except ValueError:
+        return False
