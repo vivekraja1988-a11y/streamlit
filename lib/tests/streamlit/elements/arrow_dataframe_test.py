@@ -31,6 +31,7 @@ from streamlit.dataframe_util import (
     is_pandas_version_less_than,
 )
 from streamlit.elements.arrow import (
+    ButtonClickSerde,
     DataframeSelectionSerde,
     _validate_selection_state,
     parse_selection_mode,
@@ -1172,6 +1173,75 @@ class TestValidateSelectionState:
             selection_mode_set={"single-row-required"},
         )
         assert result["selection"]["rows"] == [0]
+
+
+class TestButtonClickSerde:
+    """Tests for ButtonClickSerde serialization and deserialization."""
+
+    def test_serialize_none_returns_empty_proto(self) -> None:
+        """Test that serializing None returns empty StringTriggerValue."""
+        serde = ButtonClickSerde()
+        result = serde.serialize(None)
+        assert result.data == ""
+
+    def test_serialize_click_state(self) -> None:
+        """Test that serializing click state returns StringTriggerValue with JSON data."""
+        serde = ButtonClickSerde()
+        result = serde.serialize({"row": 5, "label": "Click me"})
+        assert result.data == '{"row": 5, "label": "Click me"}'
+
+    @pytest.mark.parametrize(
+        ("ui_value", "expected"),
+        [
+            (None, None),
+            ("", None),
+            ('{"row": 3, "label": "Delete"}', {"row": 3, "label": "Delete"}),
+        ],
+        ids=["none", "empty_string", "valid_json"],
+    )
+    def test_deserialize(
+        self, ui_value: str | None, expected: dict[str, object] | None
+    ) -> None:
+        """Test deserialize returns None for empty input and parsed dict for valid JSON."""
+        serde = ButtonClickSerde()
+        assert serde.deserialize(ui_value) == expected
+
+    @pytest.mark.parametrize(
+        "ui_value",
+        [
+            "not json",  # Invalid JSON syntax
+            '"just a string"',  # Valid JSON but wrong shape (string not dict)
+            '{"row": "0", "label": "x"}',  # row is string instead of int
+            '{"row": 0}',  # Missing label
+            '{"label": "x"}',  # Missing row
+            "[]",  # Array instead of dict
+        ],
+        ids=[
+            "invalid_json",
+            "json_string_not_dict",
+            "row_string_not_int",
+            "missing_label",
+            "missing_row",
+            "array_not_dict",
+        ],
+    )
+    def test_deserialize_malformed_payload_raises(self, ui_value: str) -> None:
+        """Test deserialize raises for malformed payloads with wrong shape or types."""
+        import json
+
+        from streamlit.errors import StreamlitAPIException
+
+        serde = ButtonClickSerde()
+        with pytest.raises((StreamlitAPIException, json.JSONDecodeError)):
+            serde.deserialize(ui_value)
+
+    def test_roundtrip_preserves_state(self) -> None:
+        """Test that serialization roundtrip preserves the click state."""
+        serde = ButtonClickSerde()
+        original = {"row": 0, "label": ":material/edit: Edit"}
+        serialized = serde.serialize(original)
+        deserialized = serde.deserialize(serialized.data)
+        assert deserialized == original
 
 
 _EMPTY_SELECTION = {"rows": [], "columns": [], "cells": []}

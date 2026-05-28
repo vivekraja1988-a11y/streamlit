@@ -21,7 +21,11 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Final, Literal, TypeAlias
 
 from streamlit.dataframe_util import DataFormat
-from streamlit.elements.lib.column_types import ColumnConfig, ColumnType
+from streamlit.elements.lib.column_types import (
+    ButtonColumnResult,
+    ColumnConfig,
+    ColumnType,
+)
 from streamlit.elements.lib.dicttools import remove_none_values
 from streamlit.errors import StreamlitAPIException
 
@@ -39,7 +43,7 @@ INDEX_IDENTIFIER: IndexIdentifierType = "_index"
 # This is used as prefix for columns that are configured via the numerical position.
 # The integer value is converted into a string key with this prefix.
 # This needs to match with the prefix configured in the frontend.
-_NUMERICAL_POSITION_PREFIX = "_pos:"
+NUMERICAL_POSITION_PREFIX = "_pos:"
 
 
 # The column data kind is used to describe the type of the data within the column.
@@ -407,13 +411,14 @@ def determine_dataframe_schema(
 
 # A mapping of column names/IDs to column configs.
 ColumnConfigMapping: TypeAlias = dict[IndexIdentifierType | str | int, ColumnConfig]
+
 ColumnConfigMappingInput: TypeAlias = Mapping[
     # TODO(lukasmasuch): This should also use int here to
     # correctly type the support for positional index. However,
     # allowing int here leads mypy to complain about simple dict[str, ...]
     # as input -> which seems like a mypy bug.
     IndexIdentifierType | str,
-    ColumnConfig | str | None,
+    ColumnConfig | ButtonColumnResult | str | None,
 ]
 
 
@@ -442,6 +447,11 @@ def process_config_mapping(
             transformed_column_config[column] = ColumnConfig(hidden=True)
         elif isinstance(config, str):
             transformed_column_config[column] = ColumnConfig(label=config)
+        elif isinstance(config, ButtonColumnResult):
+            # ButtonColumnResult is typically preprocessed before reaching this function
+            # in both st.dataframe and st.data_editor. If we encounter it here, extract
+            # the config dict. Button columns are always read-only.
+            transformed_column_config[column] = copy.deepcopy(config.config)
         elif isinstance(config, dict):
             # Ensure that the column config objects are cloned
             # since we will apply in-place changes to it.
@@ -526,7 +536,7 @@ def _convert_column_config_to_json(column_config_mapping: ColumnConfigMapping) -
         # Ignore all None values and prefix columns specified by numerical index:
         return json.dumps(
             {
-                (f"{_NUMERICAL_POSITION_PREFIX}{k!s}" if isinstance(k, int) else k): v
+                (f"{NUMERICAL_POSITION_PREFIX}{k!s}" if isinstance(k, int) else k): v
                 for (k, v) in remove_none_values(column_config_mapping).items()
             },
             allow_nan=False,
