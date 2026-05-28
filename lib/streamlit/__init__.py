@@ -195,6 +195,7 @@ chat_input = _main.chat_input
 checkbox = _main.checkbox
 code = _main.code
 columns = _main.columns
+compare_chart = _main.compare_chart
 tabs = _main.tabs
 container = _main.container
 dataframe = _main.dataframe

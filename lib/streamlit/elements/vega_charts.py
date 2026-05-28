@@ -32,6 +32,7 @@ from typing import (
     overload,
 )
 
+import pandas as pd
 from typing_extensions import Required
 
 from streamlit import dataframe_util, type_util
@@ -1738,6 +1739,442 @@ class VegaChartsMixin:
                 width=width,
                 height=height,
             ),
+        )
+
+    @gather_metrics("compare_chart")
+    def compare_chart(
+        self,
+        data_before: Data = None,
+        data_after: Data = None,
+        x: str | None = None,
+        y: str | Sequence[str] | None = None,
+        chart_type: str = "line",
+        mode: str = "side_by_side",
+        labels: tuple[str, str] = ("Before", "After"),
+        width: Width | None = None,
+        height: Height | None = None,
+    ) -> DeltaGenerator | tuple[DeltaGenerator, DeltaGenerator]:
+        """Display charts for comparing two datasets.
+
+        This is syntax-sugar around Streamlit's existing built-in chart APIs.
+        It makes it easier to compare two datasets using simple chart types such as
+        ``st.line_chart``, ``st.bar_chart`` and ``st.area_chart``.
+
+        The function currently supports four comparison modes:
+
+        - ``side_by_side``: displays the two datasets in separate charts next to
+        each other.
+        - ``overlay``: combines the two datasets into a single chart and uses color
+        to distinguish them.
+        - ``difference``: calculates the difference between the two datasets
+        - ``ratio``: calculates the ratio between the two datasets
+
+        Parameters
+        ----------
+        data_before : Anything supported by st.dataframe
+            The first dataset to compare. This is usually the "before", baseline,
+            or control dataset.
+
+        data_after : Anything supported by st.dataframe
+            The second dataset to compare. This is usually the "after", result, or
+            treatment dataset.
+
+        x : str or None
+            Column name or key associated to the x-axis data. If ``x`` is
+            ``None`` (default), Streamlit uses the data index for the x-axis
+            values.
+
+        y : str, Sequence of str, or None
+            Column name(s) or key(s) associated to the y-axis data. If this is
+            ``None`` (default), Streamlit uses the common numeric columns from both
+            datasets, excluding the column selected for ``x``.
+
+        chart_type : "line", "bar", or "area"
+            The type of chart to use for the comparison.
+
+            - ``"line"``: uses ``st.line_chart``.
+            - ``"bar"``: uses ``st.bar_chart``.
+            - ``"area"``: uses ``st.area_chart``.
+
+            Defaults to ``"line"``.
+
+        mode : "side_by_side", "overlay", "difference", or "ratio"
+            The comparison mode to use.
+
+            - ``"side_by_side"`` displays both datasets in separate charts next to
+            each other.
+            - ``"overlay"`` displays both datasets on the same chart. The datasets
+            are combined into one dataframe with an additional categorical column
+            used to distinguish them visually.
+            - ``"difference"`` displays the difference between the two datasets
+            in a single chart
+            - ``"ratio"`` displays the ratio between the two datasets
+            in a single chart
+
+            Defaults to ``"side_by_side"``.
+
+        labels : tuple of str
+            Labels used to identify the two datasets. The first label is used for
+            ``data_before`` and the second label is used for ``data_after``.
+
+            Defaults to ``("Before", "After")``.
+
+        width : "stretch", "content", or int
+            The width of the chart element. If this is ``None`` (default),
+            ``"stretch"`` is used.
+
+        height : "stretch", "content", or int
+            The height of the chart element. If this is ``None`` (default),
+            ``"content"`` is used.
+
+        Returns
+        -------
+        DeltaGenerator or tuple of DeltaGenerator
+            In ``side_by_side`` mode, returns a tuple containing the two chart
+            elements. In ``overlay`` mode, returns a single chart element.
+
+        Examples
+        --------
+        **Example 1: Compare two datasets side by side**
+
+        >>> import pandas as pd
+        >>> import streamlit as st
+        >>>
+        >>> before_df = pd.DataFrame(
+        ...     {"month": ["Jan", "Feb", "Mar"], "sales": [10, 15, 13]}
+        ... )
+        >>> after_df = pd.DataFrame(
+        ...     {"month": ["Jan", "Feb", "Mar"], "sales": [14, 18, 20]}
+        ... )
+        >>>
+        >>> st.compare_chart(
+        ...     before_df,
+        ...     after_df,
+        ...     x="month",
+        ...     y="sales",
+        ...     chart_type="line",
+        ...     mode="side_by_side",
+        ... )
+
+        **Example 2: Compare two datasets on the same chart**
+
+        >>> import pandas as pd
+        >>> import streamlit as st
+        >>>
+        >>> before_df = pd.DataFrame(
+        ...     {"month": ["Jan", "Feb", "Mar"], "sales": [10, 15, 13]}
+        ... )
+        >>> after_df = pd.DataFrame(
+        ...     {"month": ["Jan", "Feb", "Mar"], "sales": [14, 18, 20]}
+        ... )
+        >>>
+        >>> st.compare_chart(
+        ...     before_df,
+        ...     after_df,
+        ...     x="month",
+        ...     y="sales",
+        ...     chart_type="line",
+        ...     mode="overlay",
+        ...     labels=("Before", "After"),
+        ... )
+
+        **Example 3: Overlay comparison with a bar chart**
+
+        >>> import pandas as pd
+        >>> import streamlit as st
+        >>>
+        >>> before_df = pd.DataFrame(
+        ...     {"category": ["A", "B", "C"], "value": [20, 35, 30]}
+        ... )
+        >>> after_df = pd.DataFrame(
+        ...     {"category": ["A", "B", "C"], "value": [25, 30, 40]}
+        ... )
+        >>>
+        >>> st.compare_chart(
+        ...     before_df,
+        ...     after_df,
+        ...     x="category",
+        ...     y="value",
+        ...     chart_type="bar",
+        ...     mode="overlay",
+        ... )
+        """
+        if mode not in {"side_by_side", "overlay", "difference", "ratio"}:
+            raise StreamlitAPIException(
+                f"You have passed {mode} to `mode`. But only 'side_by_side', "
+                "'overlay', 'difference' and 'ratio' are supported."
+            )
+
+        if chart_type not in {"line", "bar", "area"}:
+            raise StreamlitAPIException(
+                f"You have passed {chart_type} to `chart_type`. But only 'line', "
+                "'bar' and 'area' are supported."
+            )
+
+        if len(labels) != 2:
+            raise StreamlitAPIException("`labels` must contain exactly two values.")
+
+        if labels[0] == labels[1]:
+            raise StreamlitAPIException("`labels` must contain two different values.")
+
+        if data_before is None or data_after is None:
+            raise StreamlitAPIException(
+                "`data_before` and `data_after` must both be provided."
+            )
+
+        if width is not None:
+            validate_width(width, allow_content=True)
+
+        if height is not None:
+            validate_height(height, allow_content=True)
+
+        resolved_width: Width = "stretch" if width is None else width
+        resolved_height: Height = "content" if height is None else height
+
+        before_df = dataframe_util.convert_anything_to_pandas_df(
+            data_before,
+            ensure_copy=True,
+        )
+        after_df = dataframe_util.convert_anything_to_pandas_df(
+            data_after,
+            ensure_copy=True,
+        )
+
+        if before_df.empty or after_df.empty:
+            raise StreamlitAPIException(
+                "`data_before` and `data_after` must not be empty."
+            )
+
+        if x is not None and (x not in before_df.columns or x not in after_df.columns):
+            raise StreamlitAPIException(
+                f'Column "{x}" selected for `x` must exist in both datasets.'
+            )
+
+        if isinstance(y, str):
+            y_columns = [y]
+        elif y is None:
+            y_columns = [
+                column
+                for column in before_df.columns
+                if column != x
+                and column in after_df.columns
+                and pd.api.types.is_numeric_dtype(before_df[column])
+                and pd.api.types.is_numeric_dtype(after_df[column])
+            ]
+        else:
+            y_columns = list(y)
+
+        if not y_columns:
+            raise StreamlitAPIException(
+                "No valid `y` columns were found. Please provide `y` or use datasets "
+                "with at least one common numeric column."
+            )
+
+        for y_col in y_columns:
+            if y_col not in before_df.columns or y_col not in after_df.columns:
+                raise StreamlitAPIException(
+                    f'Column "{y_col}" selected for `y` must exist in both datasets.'
+                )
+
+            if not pd.api.types.is_numeric_dtype(
+                before_df[y_col]
+            ) or not pd.api.types.is_numeric_dtype(after_df[y_col]):
+                raise StreamlitAPIException(
+                    f'Column "{y_col}" selected for `y` must be numeric in both datasets.'
+                )
+
+        chart_method_name = f"{chart_type}_chart"
+        chart_method = cast("Any", getattr(self, chart_method_name))
+
+        if mode == "side_by_side":
+            left_col, right_col = self.columns(2)
+
+            left_col.caption(labels[0])
+            right_col.caption(labels[1])
+
+            left_chart_method = cast("Any", getattr(left_col, chart_method_name))
+            right_chart_method = cast("Any", getattr(right_col, chart_method_name))
+
+            chart_y = y if y is not None else y_columns
+
+            left_chart = left_chart_method(
+                before_df,
+                x=x,
+                y=chart_y,
+                width=resolved_width,
+                height=resolved_height,
+            )
+            right_chart = right_chart_method(
+                after_df,
+                x=x,
+                y=chart_y,
+                width=resolved_width,
+                height=resolved_height,
+            )
+
+            return left_chart, right_chart
+
+        if mode == "overlay":
+            compare_label_column = "Dataset"
+            compare_index_column = "Index"
+            compare_variable_column = "Metric"
+            compare_value_column = "Value"
+            compare_series_column = "Series"
+
+            reserved_columns = {compare_label_column}
+
+            if x is None:
+                reserved_columns.add(compare_index_column)
+
+            if len(y_columns) > 1:
+                reserved_columns.update(
+                    {
+                        compare_variable_column,
+                        compare_value_column,
+                        compare_series_column,
+                    }
+                )
+
+            conflicting_columns = reserved_columns.intersection(
+                before_df.columns
+            ).union(reserved_columns.intersection(after_df.columns))
+
+            if conflicting_columns:
+                raise StreamlitAPIException(
+                    "The input datasets contain columns reserved for compare_chart: "
+                    f"{', '.join(sorted(conflicting_columns))}."
+                )
+
+            overlay_before_df = before_df.copy()
+            overlay_after_df = after_df.copy()
+
+            if x is None:
+                x_column = compare_index_column
+                overlay_before_df[x_column] = overlay_before_df.index
+                overlay_after_df[x_column] = overlay_after_df.index
+            else:
+                x_column = x
+
+            overlay_before_df[compare_label_column] = labels[0]
+            overlay_after_df[compare_label_column] = labels[1]
+
+            combined_df = pd.concat(
+                [overlay_before_df, overlay_after_df],
+                ignore_index=True,
+            )
+
+            chart_data = combined_df
+            chart_y = y_columns[0]
+            chart_color = compare_label_column
+
+            if len(y_columns) > 1:
+                chart_data = combined_df.melt(
+                    id_vars=[x_column, compare_label_column],
+                    value_vars=y_columns,
+                    var_name=compare_variable_column,
+                    value_name=compare_value_column,
+                )
+
+                chart_data[compare_series_column] = (
+                    chart_data[compare_label_column].astype(str)
+                    + " - "
+                    + chart_data[compare_variable_column].astype(str)
+                )
+
+                chart_y = compare_value_column
+                chart_color = compare_series_column
+
+            chart_args: dict[str, Any] = {
+                "data": chart_data,
+                "x": x_column,
+                "y": chart_y,
+                "color": chart_color,
+                "width": resolved_width,
+                "height": resolved_height,
+            }
+
+            if chart_type == "bar":
+                chart_args["stack"] = "layered"
+
+            return chart_method(**chart_args)
+
+        if mode in {"difference", "ratio"}:
+            compare_index_column = "Index"
+
+            diff_before_df = before_df.copy()
+            diff_after_df = after_df.copy()
+
+            if x is None:
+                if (
+                    compare_index_column in diff_before_df.columns
+                    or compare_index_column in diff_after_df.columns
+                ):
+                    raise StreamlitAPIException(
+                        f'Column "{compare_index_column}" is reserved for compare_chart.'
+                    )
+
+                x_column = compare_index_column
+                diff_before_df[x_column] = diff_before_df.index
+                diff_after_df[x_column] = diff_after_df.index
+            else:
+                x_column = x
+
+            if diff_before_df[x_column].duplicated().any():
+                raise StreamlitAPIException(
+                    f'Column "{x_column}" must not contain duplicate values in data_before '
+                    f"for {mode} mode."
+                )
+
+            if diff_after_df[x_column].duplicated().any():
+                raise StreamlitAPIException(
+                    f'Column "{x_column}" must not contain duplicate values in data_after '
+                    f"for {mode} mode."
+                )
+
+            merged_df = diff_before_df[[x_column, *y_columns]].merge(
+                diff_after_df[[x_column, *y_columns]],
+                on=x_column,
+                how="outer",
+                suffixes=("_before", "_after"),
+                indicator=True,
+            )
+
+            if not (merged_df["_merge"] == "both").all():
+                raise StreamlitAPIException(
+                    f'Column "{x_column}" must contain the same values in both datasets '
+                    f"for {mode} mode."
+                )
+
+            result_df = merged_df[[x_column]].copy()
+
+            for y_column in y_columns:
+                if mode == "difference":
+                    result_df[y_column] = (
+                        merged_df[f"{y_column}_after"] - merged_df[f"{y_column}_before"]
+                    )
+                else:
+                    if (merged_df[f"{y_column}_before"] == 0).any():
+                        raise StreamlitAPIException(
+                            f'Column "{y_column}" contains zero values in data_before '
+                            "which are not allowed for ratio mode."
+                        )
+                    result_df[y_column] = (
+                        merged_df[f"{y_column}_after"] / merged_df[f"{y_column}_before"]
+                    )
+
+            y_column = y_columns[0] if len(y_columns) == 1 else y_columns
+
+            return chart_method(
+                result_df,
+                x=x_column,
+                y=y_column,
+                width=resolved_width,
+                height=resolved_height,
+            )
+
+        raise StreamlitAPIException(
+            f"Invalid `mode`: {mode!r}. "
+            'Supported values are "side_by_side", "overlay", "difference" and "ratio".'
         )
 
     # When on_select=Ignore, return DeltaGenerator.

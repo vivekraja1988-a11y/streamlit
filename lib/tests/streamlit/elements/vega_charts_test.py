@@ -1638,6 +1638,373 @@ ST_CHART_ARGS = [
 class BuiltInChartTest(DeltaGeneratorTestCase):
     """Test our built-in chart commands."""
 
+    def test_compare_chart_with_default_arguments(self):
+        """Test that compare_chart accepts defaults with two simple DataFrames."""
+        before_df = pd.DataFrame({"x": [1, 2], "y": [10, 20]})
+        after_df = pd.DataFrame({"x": [1, 2], "y": [15, 25]})
+
+        st.compare_chart(before_df, after_df)
+
+        deltas = self.get_all_deltas_from_queue()
+        vega_chart_deltas = [
+            delta for delta in deltas if delta.new_element.HasField("vega_lite_chart")
+        ]
+
+        assert len(vega_chart_deltas) == 2
+
+    def test_compare_chart_accepts_explicit_default_values(self):
+        """Test compare_chart accepts explicit Task 1 default values."""
+        before_df = pd.DataFrame({"x": [1, 2], "y": [10, 20]})
+        after_df = pd.DataFrame({"x": [1, 2], "y": [15, 25]})
+
+        st.compare_chart(
+            data_before=before_df,
+            data_after=after_df,
+            x=None,
+            y=None,
+            chart_type="line",
+            mode="side_by_side",
+            labels=("Before", "After"),
+            width=None,
+            height=None,
+        )
+
+        deltas = self.get_all_deltas_from_queue()
+        vega_chart_deltas = [
+            delta for delta in deltas if delta.new_element.HasField("vega_lite_chart")
+        ]
+
+        assert len(vega_chart_deltas) == 2
+
+    def test_compare_chart_invalid_mode_raises_error(self):
+        """Test invalid compare_chart mode raises a clear error."""
+        before_df = pd.DataFrame({"x": [1, 2], "y": [10, 20]})
+        after_df = pd.DataFrame({"x": [1, 2], "y": [15, 25]})
+
+        with pytest.raises(StreamlitAPIException, match="supported"):
+            st.compare_chart(before_df, after_df, mode="invalid_mode")
+
+    def test_compare_chart_overlay_uses_dataset_column_for_color(self):
+        """Test that overlay mode uses a dataset column for color grouping."""
+        before_df = pd.DataFrame({"name": ["A", "B"], "value": [10, 20]})
+        after_df = pd.DataFrame({"name": ["A", "B"], "value": [15, 25]})
+
+        st.compare_chart(
+            before_df,
+            after_df,
+            x="name",
+            y="value",
+            chart_type="bar",
+            mode="overlay",
+            labels=("Control", "Treatment"),
+        )
+
+        proto = self.get_delta_from_queue().new_element.vega_lite_chart
+        chart_spec = json.loads(proto.spec)
+
+        assert chart_spec["encoding"]["color"]["field"] == "Dataset"
+
+        output_df = convert_arrow_bytes_to_pandas_df(proto.datasets[0].data.data)
+
+        assert set(output_df["Dataset"]) == {"Control", "Treatment"}
+        assert list(output_df["name"]) == ["A", "B", "A", "B"]
+        assert list(output_df["value"]) == [10, 20, 15, 25]
+
+    def test_compare_chart_overlay_with_multiple_y_columns_uses_series_column(self):
+        """Test that overlay mode with multiple y columns creates a combined series column."""
+        before_df = pd.DataFrame(
+            {
+                "name": ["A", "B", "C"],
+                "grade": [10, 20, 15],
+                "value": [15, 45, 19],
+            }
+        )
+        after_df = pd.DataFrame(
+            {
+                "name": ["A", "B", "C"],
+                "grade": [14, 18, 22],
+                "value": [85, 90, 88],
+            }
+        )
+
+        st.compare_chart(
+            before_df,
+            after_df,
+            x="name",
+            y=["grade", "value"],
+            chart_type="bar",
+            mode="overlay",
+            labels=("Before", "After"),
+        )
+
+        proto = self.get_delta_from_queue().new_element.vega_lite_chart
+        chart_spec = json.loads(proto.spec)
+
+        assert chart_spec["encoding"]["color"]["field"] == "Series"
+        assert chart_spec["encoding"]["y"]["field"] == "Value"
+
+        output_df = convert_arrow_bytes_to_pandas_df(proto.datasets[0].data.data)
+
+        assert set(output_df["Series"]) == {
+            "Before - value",
+            "After - value",
+            "Before - grade",
+            "After - grade",
+        }
+
+    def test_compare_chart_overlay_with_implicit_y_uses_common_numeric_columns(self):
+        """Test that overlay mode infers common numeric columns when y is None."""
+        before_df = pd.DataFrame(
+            {
+                "name": ["A", "B"],
+                "value": [10, 20],
+                "score": [1.5, 2.5],
+            }
+        )
+        after_df = pd.DataFrame(
+            {
+                "name": ["A", "B"],
+                "value": [15, 25],
+                "score": [2.0, 3.0],
+            }
+        )
+
+        st.compare_chart(
+            before_df,
+            after_df,
+            x="name",
+            y=None,
+            chart_type="bar",
+            mode="overlay",
+        )
+
+        proto = self.get_delta_from_queue().new_element.vega_lite_chart
+        output_df = convert_arrow_bytes_to_pandas_df(proto.datasets[0].data.data)
+
+        assert set(output_df["Series"]) == {
+            "Before - value",
+            "After - value",
+            "Before - score",
+            "After - score",
+        }
+
+    def test_compare_chart_overlay_raises_when_x_column_is_missing(self):
+        """Test that overlay mode raises when x does not exist in both datasets."""
+        before_df = pd.DataFrame({"name": ["A", "B"], "value": [10, 20]})
+        after_df = pd.DataFrame({"category": ["A", "B"], "value": [15, 25]})
+
+        with pytest.raises(StreamlitAPIException, match="selected for `x`"):
+            st.compare_chart(
+                before_df,
+                after_df,
+                x="name",
+                y="value",
+                mode="overlay",
+            )
+
+    def test_compare_chart_overlay_raises_when_y_column_is_missing(self):
+        """Test that overlay mode raises when y does not exist in both datasets."""
+        before_df = pd.DataFrame({"name": ["A", "B"], "value": [10, 20]})
+        after_df = pd.DataFrame({"name": ["A", "B"], "score": [15, 25]})
+
+        with pytest.raises(StreamlitAPIException, match="selected for `y`"):
+            st.compare_chart(
+                before_df,
+                after_df,
+                x="name",
+                y="value",
+                mode="overlay",
+            )
+
+    def test_compare_chart_overlay_raises_when_y_column_is_not_numeric(self):
+        """Test that overlay mode raises when y is not numeric in both datasets."""
+        before_df = pd.DataFrame({"name": ["A", "B"], "value": ["low", "high"]})
+        after_df = pd.DataFrame({"name": ["A", "B"], "value": ["low", "high"]})
+
+        with pytest.raises(StreamlitAPIException, match="must be numeric"):
+            st.compare_chart(
+                before_df,
+                after_df,
+                x="name",
+                y="value",
+                mode="overlay",
+            )
+
+    def test_compare_chart_difference_calculates_after_minus_before(self):
+        """Test that difference mode calculates data_after minus data_before."""
+        before_df = pd.DataFrame({"name": ["A", "B", "C"], "value": [10, 20, 15]})
+        after_df = pd.DataFrame({"name": ["A", "B", "C"], "value": [14, 18, 22]})
+
+        st.compare_chart(
+            before_df,
+            after_df,
+            x="name",
+            y="value",
+            chart_type="bar",
+            mode="difference",
+        )
+
+        proto = self.get_delta_from_queue().new_element.vega_lite_chart
+        output_df = convert_arrow_bytes_to_pandas_df(proto.datasets[0].data.data)
+
+        expected_df = pd.DataFrame({"name": ["A", "B", "C"], "value": [4, -2, 7]})
+
+        pd.testing.assert_frame_equal(output_df, expected_df)
+
+    def test_compare_chart_difference_with_multiple_y_columns(self):
+        """Test that difference mode supports multiple y columns."""
+        before_df = pd.DataFrame(
+            {
+                "name": ["A", "B"],
+                "grade": [10, 20],
+                "value": [5, 7],
+            }
+        )
+        after_df = pd.DataFrame(
+            {
+                "name": ["A", "B"],
+                "grade": [14, 18],
+                "value": [8, 10],
+            }
+        )
+
+        st.compare_chart(
+            before_df,
+            after_df,
+            x="name",
+            y=["grade", "value"],
+            chart_type="bar",
+            mode="difference",
+        )
+
+        proto = self.get_delta_from_queue().new_element.vega_lite_chart
+        output_df = convert_arrow_bytes_to_pandas_df(proto.datasets[0].data.data)
+
+        color_column = f"color{_PROTECTION_SUFFIX}"
+        value_column = f"value{_PROTECTION_SUFFIX}"
+
+        expected_df = pd.DataFrame(
+            {
+                "name": ["A", "B", "A", "B"],
+                color_column: ["grade", "grade", "value", "value"],
+                value_column: [4, -2, 3, 3],
+            }
+        )
+
+        pd.testing.assert_frame_equal(output_df, expected_df)
+
+    def test_compare_chart_difference_raises_when_x_has_duplicates_in_data_before(self):
+        """Test that difference mode raises when data_before has duplicate x values."""
+        before_df = pd.DataFrame({"name": ["A", "A"], "value": [10, 20]})
+        after_df = pd.DataFrame({"name": ["A", "B"], "value": [15, 25]})
+
+        with pytest.raises(
+            StreamlitAPIException, match="duplicate values in data_before"
+        ):
+            st.compare_chart(
+                before_df,
+                after_df,
+                x="name",
+                y="value",
+                mode="difference",
+            )
+
+    def test_compare_chart_difference_raises_when_x_has_duplicates_in_data_after(self):
+        """Test that difference mode raises when data_after has duplicate x values."""
+        before_df = pd.DataFrame({"name": ["A", "B"], "value": [10, 20]})
+        after_df = pd.DataFrame({"name": ["A", "A"], "value": [15, 25]})
+
+        with pytest.raises(
+            StreamlitAPIException, match="duplicate values in data_after"
+        ):
+            st.compare_chart(
+                before_df,
+                after_df,
+                x="name",
+                y="value",
+                mode="difference",
+            )
+
+    def test_compare_chart_ratio_calculates_after_divided_by_before(self):
+        """Test that ratio mode calculates data_after divided by data_before."""
+        before_df = pd.DataFrame({"name": ["A", "B", "C"], "value": [10, 20, 5]})
+        after_df = pd.DataFrame({"name": ["A", "B", "C"], "value": [20, 10, 10]})
+
+        st.compare_chart(
+            before_df,
+            after_df,
+            x="name",
+            y="value",
+            chart_type="bar",
+            mode="ratio",
+        )
+
+        proto = self.get_delta_from_queue().new_element.vega_lite_chart
+        output_df = convert_arrow_bytes_to_pandas_df(proto.datasets[0].data.data)
+
+        expected_df = pd.DataFrame({"name": ["A", "B", "C"], "value": [2.0, 0.5, 2.0]})
+
+        pd.testing.assert_frame_equal(output_df, expected_df)
+
+    def test_compare_chart_ratio_with_multiple_y_columns(self):
+        """Test that ratio mode supports multiple y columns."""
+        before_df = pd.DataFrame(
+            {
+                "name": ["A", "B"],
+                "grade": [10, 20],
+                "value": [5, 8],
+            }
+        )
+        after_df = pd.DataFrame(
+            {
+                "name": ["A", "B"],
+                "grade": [20, 10],
+                "value": [10, 16],
+            }
+        )
+
+        st.compare_chart(
+            before_df,
+            after_df,
+            x="name",
+            y=["grade", "value"],
+            chart_type="bar",
+            mode="ratio",
+        )
+
+        proto = self.get_delta_from_queue().new_element.vega_lite_chart
+        output_df = convert_arrow_bytes_to_pandas_df(proto.datasets[0].data.data)
+
+        color_column = f"color{_PROTECTION_SUFFIX}"
+        value_column = f"value{_PROTECTION_SUFFIX}"
+
+        expected_df = pd.DataFrame(
+            {
+                "name": ["A", "B", "A", "B"],
+                color_column: ["grade", "grade", "value", "value"],
+                value_column: [2.0, 0.5, 2.0, 2.0],
+            }
+        )
+
+        pd.testing.assert_frame_equal(output_df, expected_df)
+
+    def test_compare_chart_ratio_raises_when_data_before_has_zero(self):
+        """Test that ratio mode raises when data_before contains zero values."""
+        before_df = pd.DataFrame({"name": ["A", "B"], "value": [0, 20]})
+        after_df = pd.DataFrame({"name": ["A", "B"], "value": [15, 25]})
+
+        with pytest.raises(
+            StreamlitAPIException,
+            match=r"contains zero values in data_before.*ratio mode",
+        ):
+            st.compare_chart(
+                before_df,
+                after_df,
+                x="name",
+                y="value",
+                mode="ratio",
+            )
+
     @parameterized.expand(ST_CHART_ARGS)
     def test_empty_chart(self, chart_command: Callable, altair_type: str):
         """Test arrow chart with no arguments."""
