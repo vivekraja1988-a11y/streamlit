@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     from streamlit.delta_generator import DeltaGenerator
     from streamlit.elements.lib.dialog import Dialog
+    from streamlit.elements.lib.mutable_accordion_container import AccordionContainer
     from streamlit.elements.lib.mutable_expander_container import ExpanderContainer
     from streamlit.elements.lib.mutable_popover_container import PopoverContainer
     from streamlit.elements.lib.mutable_status_container import StatusContainer
@@ -60,6 +61,7 @@ class DeltaGeneratorSingleton:
         expander_container_cls: type[ExpanderContainer],
         tab_container_cls: type[TabContainer],
         popover_container_cls: type[PopoverContainer],
+        accordion_container_cls: type[AccordionContainer],
     ) -> None:
         """Registers and initializes all delta-generator classes.
 
@@ -103,6 +105,7 @@ class DeltaGeneratorSingleton:
         self._expander_container_cls = expander_container_cls
         self._tab_container_cls = tab_container_cls
         self._popover_container_cls = popover_container_cls
+        self._accordion_container_cls = accordion_container_cls
 
     @property
     def main_dg(self) -> DeltaGenerator:
@@ -156,6 +159,13 @@ class DeltaGeneratorSingleton:
         DeltaGenerator, this is used to avoid circular imports.
         """
         return self._popover_container_cls
+
+    @property
+    def accordion_container_cls(self) -> type[AccordionContainer]:
+        """Stub for AccordionContainer. Since AccordionContainer inherits from
+        DeltaGenerator, this is used to avoid circular imports.
+        """
+        return self._accordion_container_cls
 
 
 def get_dg_singleton_instance() -> DeltaGeneratorSingleton:
