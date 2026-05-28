@@ -67,6 +67,26 @@ export interface ProgressColumnParams {
   readonly color?: ChartColor
 }
 
+type ProgressCellData = RangeCellType["data"] & {
+  readonly rawValue: number
+}
+
+type ProgressRangeCell = Omit<RangeCellType, "data"> & {
+  readonly data: ProgressCellData
+  readonly isMissingValue: boolean
+}
+
+function hasRawValue(
+  data: RangeCellType["data"] | undefined
+): data is ProgressCellData {
+  return (
+    data !== undefined &&
+    typeof data === "object" &&
+    "rawValue" in data &&
+    typeof data.rawValue === "number"
+  )
+}
+
 /**
  * A read-only column type to support rendering values that have a defined
  * range. This is rendered via a progress-bar-like visualization.
@@ -222,12 +242,13 @@ function ProgressColumn(
         progressColor = resolveNamedColor(parameters.color, theme)
       }
 
-      return {
+      const progressCell: ProgressRangeCell = {
         ...cellTemplate,
         isMissingValue: isNullOrUndefined(data),
         copyData: String(cellData), // Column sorting is done via the copyData value
         data: {
           ...cellTemplate.data,
+          rawValue: cellData,
           value: normalizeCellValue,
           label: displayData,
           measureLabel:
@@ -238,12 +259,19 @@ function ProgressColumn(
               : measureLabel,
           color: progressColor,
         },
-      } as RangeCellType
+      }
+
+      return progressCell
     },
     getCellValue(cell: RangeCellType | LoadingCell): number | null {
       if (cell.kind === GridCellKind.Loading) {
         return null
       }
+
+      if (hasRawValue(cell.data)) {
+        return cell.data.rawValue
+      }
+
       return cell.data?.value === undefined ? null : cell.data?.value
     },
   }
