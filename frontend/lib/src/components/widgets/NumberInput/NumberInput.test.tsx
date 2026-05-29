@@ -228,7 +228,10 @@ describe("NumberInput widget", () => {
     expect(numberInput).toHaveAttribute("type", "number")
   })
 
-  it("sets min/max values", () => {
+  it("sets min/max HTML attributes for accessibility while suppressing browser validation", () => {
+    // We keep min/max HTML attributes to preserve bounded spinbutton semantics
+    // for assistive technology. The native validation popup is suppressed because
+    // Streamlit doesn't use native form submission and reportValidity() is not called.
     const props = getIntProps({
       hasMin: true,
       hasMax: true,
@@ -239,6 +242,7 @@ describe("NumberInput widget", () => {
     render(<NumberInput {...props} />)
     const numberInput = screen.getByTestId("stNumberInputField")
 
+    // min/max attributes should be present for accessibility
     expect(numberInput).toHaveAttribute("min", "0")
     expect(numberInput).toHaveAttribute("max", "10")
   })
@@ -1052,13 +1056,9 @@ describe("NumberInput widget", () => {
         expect(input).toHaveDisplayValue("42")
       })
 
-      it("handles out-of-range values by not updating formatted value", async () => {
+      it("handles out-of-range values by showing error UI", async () => {
         const user = userEvent.setup()
         const props = getIntProps({ default: 10, min: 0, max: 50 })
-
-        // Mock reportValidity to track if it's called
-        const mockReportValidity = vi.fn()
-        HTMLInputElement.prototype.reportValidity = mockReportValidity
 
         render(<NumberInput {...props} />)
 
@@ -1067,12 +1067,10 @@ describe("NumberInput widget", () => {
         await user.type(input, "100") // Above max
         await user.keyboard("{enter}")
 
-        // Should not change the formatted value and call reportValidity
+        // Should show error icon and not commit the value
         expect(input).toHaveDisplayValue("100") // Still shows the invalid input
-        expect(mockReportValidity).toHaveBeenCalled()
-
-        // Cleanup
-        HTMLInputElement.prototype.reportValidity = () => true
+        expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+        expect(input).toHaveAttribute("aria-invalid", "true")
       })
 
       it.each([
@@ -1448,6 +1446,392 @@ describe("NumberInput widget", () => {
       await user.click(stepDownButton) // 0.51
 
       expect(input).toHaveValue(0.51)
+    })
+  })
+
+  describe("Error UI", () => {
+    it("displays error when value is below min", async () => {
+      const user = userEvent.setup()
+      const props = getIntProps({ default: 10, min: 5, max: 50 })
+      vi.spyOn(props.widgetMgr, "setIntValue")
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+      await user.clear(input)
+      await user.type(input, "2") // Below min
+      await user.keyboard("{enter}")
+
+      // Error icon should be visible
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+      // Input should have aria-invalid attribute
+      expect(input).toHaveAttribute("aria-invalid", "true")
+      // Tooltip error message should contain the expected text
+      expect(screen.getByText(/Value must be at least 5/)).toBeVisible()
+      // Value should NOT be committed to widgetMgr
+      expect(props.widgetMgr.setIntValue).not.toHaveBeenCalledWith(
+        expect.anything(),
+        2,
+        { fromUi: true },
+        undefined
+      )
+    })
+
+    it("displays error when value is above max", async () => {
+      const user = userEvent.setup()
+      const props = getIntProps({ default: 10, min: 0, max: 50 })
+      vi.spyOn(props.widgetMgr, "setIntValue")
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+      await user.clear(input)
+      await user.type(input, "100") // Above max
+      await user.keyboard("{enter}")
+
+      // Error icon should be visible
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+      // Input should have aria-invalid attribute
+      expect(input).toHaveAttribute("aria-invalid", "true")
+      // Tooltip error message should contain the expected text
+      expect(screen.getByText(/Value must be at most 50/)).toBeVisible()
+      // Value should NOT be committed to widgetMgr
+      expect(props.widgetMgr.setIntValue).not.toHaveBeenCalledWith(
+        expect.anything(),
+        100,
+        { fromUi: true },
+        undefined
+      )
+    })
+
+    it("invalid value is not committed to widget state", async () => {
+      const user = userEvent.setup()
+      const props = getFloatProps({ default: 10.0, min: 0.0, max: 50.0 })
+      vi.spyOn(props.widgetMgr, "setDoubleValue")
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+
+      // First, commit a valid value
+      await user.clear(input)
+      await user.type(input, "25")
+      await user.keyboard("{enter}")
+
+      expect(props.widgetMgr.setDoubleValue).toHaveBeenLastCalledWith(
+        props.element,
+        25,
+        { fromUi: true },
+        undefined
+      )
+
+      // Now try to commit an invalid value
+      await user.clear(input)
+      await user.type(input, "100") // Above max
+      await user.keyboard("{enter}")
+
+      // Error should be shown
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+
+      // The last call should still be the valid value (25), not the invalid (100)
+      expect(props.widgetMgr.setDoubleValue).toHaveBeenLastCalledWith(
+        props.element,
+        25,
+        { fromUi: true },
+        undefined
+      )
+    })
+
+    it("error clears when user starts typing", async () => {
+      const user = userEvent.setup()
+      const props = getIntProps({ default: 10, min: 0, max: 50 })
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+
+      // Trigger an error
+      await user.clear(input)
+      await user.type(input, "100") // Above max
+      await user.keyboard("{enter}")
+
+      // Error should be visible
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+      expect(input).toHaveAttribute("aria-invalid", "true")
+
+      // Start typing a new value
+      await user.clear(input)
+      await user.type(input, "2")
+
+      // Error should be cleared
+      expect(
+        screen.queryByTestId("stNumberInputErrorIcon")
+      ).not.toBeInTheDocument()
+      expect(input).toHaveAttribute("aria-invalid", "false")
+    })
+
+    it("error clears when form is cleared", async () => {
+      const user = userEvent.setup()
+      const props = getIntProps({
+        formId: "form",
+        default: 10,
+        min: 0,
+        max: 50,
+      })
+      props.widgetMgr.setFormSubmitBehaviors("form", true)
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+
+      // Trigger an error
+      await user.clear(input)
+      await user.type(input, "100") // Above max
+      await user.keyboard("{enter}")
+
+      // Error should be visible
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+
+      // Submit the form (which clears it)
+      act(() => {
+        props.widgetMgr.submitForm("form", undefined)
+      })
+
+      // Error should be cleared
+      expect(
+        screen.queryByTestId("stNumberInputErrorIcon")
+      ).not.toBeInTheDocument()
+      expect(input).toHaveAttribute("aria-invalid", "false")
+      // Value should be reset to default
+      expect(input).toHaveValue(10)
+    })
+
+    it("aria-invalid is false when no error", () => {
+      const props = getIntProps({ default: 10 })
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+      expect(input).toHaveAttribute("aria-invalid", "false")
+    })
+
+    it("error is displayed on blur with out-of-range value", async () => {
+      const user = userEvent.setup()
+      const props = getIntProps({ default: 10, min: 0, max: 50 })
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+
+      // Type an invalid value and blur
+      await user.clear(input)
+      await user.type(input, "100")
+      await user.tab() // Blur
+
+      // Error should be visible
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+      expect(input).toHaveAttribute("aria-invalid", "true")
+    })
+
+    it("error clears when valid value is committed via step-down button", async () => {
+      const user = userEvent.setup()
+      const props = getIntProps({ default: 10, min: 0, max: 50 })
+      vi.spyOn(props.widgetMgr, "setIntValue")
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+      const stepDownButton = screen.getByTestId("stNumberInputStepDown")
+
+      // Trigger an error by entering a value above max
+      await user.clear(input)
+      await user.type(input, "51") // Above max
+      await user.keyboard("{enter}")
+
+      // Error should be visible
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+      expect(input).toHaveAttribute("aria-invalid", "true")
+
+      // Click step-down to get to a valid value (50)
+      await user.click(stepDownButton)
+
+      // Error should be cleared after committing a valid value via step button
+      expect(
+        screen.queryByTestId("stNumberInputErrorIcon")
+      ).not.toBeInTheDocument()
+      expect(input).toHaveAttribute("aria-invalid", "false")
+      // Value should be committed
+      expect(input).toHaveValue(50)
+      expect(props.widgetMgr.setIntValue).toHaveBeenLastCalledWith(
+        props.element,
+        50,
+        { fromUi: true },
+        undefined
+      )
+    })
+
+    it("error clears when valid value is committed via arrow keys", async () => {
+      const user = userEvent.setup()
+      const props = getIntProps({ default: 10, min: 0, max: 50 })
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+
+      // Trigger an error by entering a value below min
+      await user.clear(input)
+      await user.type(input, "-1") // Below min
+      await user.keyboard("{enter}")
+
+      // Error should be visible
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+      expect(input).toHaveAttribute("aria-invalid", "true")
+
+      // Use ArrowUp to get to a valid value (0)
+      await user.type(input, "{arrowup}")
+
+      // Error should be cleared after committing a valid value via arrow key
+      expect(
+        screen.queryByTestId("stNumberInputErrorIcon")
+      ).not.toBeInTheDocument()
+      expect(input).toHaveAttribute("aria-invalid", "false")
+      expect(input).toHaveValue(0)
+    })
+
+    it("does NOT show error when hasMin=false and hasMax=false (unconstrained)", async () => {
+      // Test case for the proto3 default value bug: when min_value=None and max_value=None
+      // are passed to st.number_input(), the proto hasMin and hasMax fields are false,
+      // but min and max fields default to 0.0. Without checking hasMin/hasMax, the
+      // validation would incorrectly reject any non-zero value.
+      const user = userEvent.setup()
+      const props = getProps({
+        dataType: NumberInputProto.DataType.INT,
+        default: 0,
+        hasMin: false, // No minimum constraint
+        hasMax: false, // No maximum constraint
+        min: 0, // Proto3 default value
+        max: 0, // Proto3 default value
+      })
+      vi.spyOn(props.widgetMgr, "setIntValue")
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+
+      // Enter a large positive value - should NOT trigger error
+      await user.clear(input)
+      await user.type(input, "999")
+      await user.keyboard("{enter}")
+
+      // No error should be shown
+      expect(
+        screen.queryByTestId("stNumberInputErrorIcon")
+      ).not.toBeInTheDocument()
+      expect(input).toHaveAttribute("aria-invalid", "false")
+      // Value should be committed
+      expect(props.widgetMgr.setIntValue).toHaveBeenLastCalledWith(
+        props.element,
+        999,
+        { fromUi: true },
+        undefined
+      )
+
+      // Enter a negative value - should NOT trigger error
+      await user.clear(input)
+      await user.type(input, "-500")
+      await user.keyboard("{enter}")
+
+      // No error should be shown
+      expect(
+        screen.queryByTestId("stNumberInputErrorIcon")
+      ).not.toBeInTheDocument()
+      expect(input).toHaveAttribute("aria-invalid", "false")
+      // Value should be committed
+      expect(props.widgetMgr.setIntValue).toHaveBeenLastCalledWith(
+        props.element,
+        -500,
+        { fromUi: true },
+        undefined
+      )
+    })
+
+    it("validates only min when hasMin=true and hasMax=false", async () => {
+      const user = userEvent.setup()
+      const props = getProps({
+        dataType: NumberInputProto.DataType.INT,
+        default: 5,
+        hasMin: true,
+        hasMax: false,
+        min: 0,
+        max: 0, // Proto3 default, but hasMax=false so this should be ignored
+      })
+      vi.spyOn(props.widgetMgr, "setIntValue")
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+
+      // Large positive value should be allowed (no max constraint)
+      await user.clear(input)
+      await user.type(input, "99999")
+      await user.keyboard("{enter}")
+
+      expect(
+        screen.queryByTestId("stNumberInputErrorIcon")
+      ).not.toBeInTheDocument()
+      expect(props.widgetMgr.setIntValue).toHaveBeenLastCalledWith(
+        props.element,
+        99999,
+        { fromUi: true },
+        undefined
+      )
+
+      // Negative value should trigger error (below min=0)
+      await user.clear(input)
+      await user.type(input, "-1")
+      await user.keyboard("{enter}")
+
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+      expect(input).toHaveAttribute("aria-invalid", "true")
+    })
+
+    it("validates only max when hasMin=false and hasMax=true", async () => {
+      const user = userEvent.setup()
+      const props = getProps({
+        dataType: NumberInputProto.DataType.INT,
+        default: 5,
+        hasMin: false,
+        hasMax: true,
+        min: 0, // Proto3 default, but hasMin=false so this should be ignored
+        max: 100,
+      })
+      vi.spyOn(props.widgetMgr, "setIntValue")
+
+      render(<NumberInput {...props} />)
+
+      const input = screen.getByTestId("stNumberInputField")
+
+      // Large negative value should be allowed (no min constraint)
+      await user.clear(input)
+      await user.type(input, "-99999")
+      await user.keyboard("{enter}")
+
+      expect(
+        screen.queryByTestId("stNumberInputErrorIcon")
+      ).not.toBeInTheDocument()
+      expect(props.widgetMgr.setIntValue).toHaveBeenLastCalledWith(
+        props.element,
+        -99999,
+        { fromUi: true },
+        undefined
+      )
+
+      // Value above max should trigger error
+      await user.clear(input)
+      await user.type(input, "101")
+      await user.keyboard("{enter}")
+
+      expect(screen.getByTestId("stNumberInputErrorIcon")).toBeVisible()
+      expect(input).toHaveAttribute("aria-invalid", "true")
     })
   })
 })
