@@ -743,14 +743,29 @@ class ResourceCache(Cache[R]):
 
         from streamlit.runtime.stats import safe_sizeof
 
+
+        stats = []
+        for entry in cache_entries:
+            try:
+                b_len = asizeof(entry)
+            except Exception as e:
+                _LOGGER.debug("Error computing byte length for cache entry: %s", e)
+                b_len = 0
+
+            stats.append(
+                CacheStat(
+                    category_name="st_cache_resource",
+                    cache_name=self.display_name,
+                    byte_length=b_len,
+                )
+
         stats = [
             CacheStat(
                 category_name="st_cache_resource",
                 cache_name=self.display_name,
                 byte_length=safe_sizeof(entry),
             )
-            for entry in cache_entries
-        ]
+            
         # In general, get_stats methods need to be able to return only requested stat
         # families, but this method only returns a single family, and we're guaranteed
         # that it was one of those requested if we make it here.
