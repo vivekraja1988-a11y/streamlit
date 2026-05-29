@@ -19,6 +19,7 @@ import {
   KeyboardEvent,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -32,6 +33,7 @@ import {
   Check,
   Close,
   ErrorOutline,
+  Stop,
 } from "@emotion-icons/material-rounded"
 import type { AxiosProgressEvent } from "axios"
 import { Textarea as UITextArea } from "baseui/textarea"
@@ -49,6 +51,7 @@ import {
 
 import { useWaveformController } from "~lib/components/audio/core/useWaveformController"
 import { LOG } from "~lib/components/ChatInput/logger"
+import { ScriptRunContext } from "~lib/components/core/ScriptRunContext"
 import { DynamicIcon } from "~lib/components/shared/Icon/DynamicIcon"
 import Icon from "~lib/components/shared/Icon/Icon"
 import InputInstructions from "~lib/components/shared/InputInstructions/InputInstructions"
@@ -63,6 +66,7 @@ import { FileUploadClient } from "~lib/FileUploadClient"
 import { useCalculatedDimensions } from "~lib/hooks/useCalculatedDimensions"
 import { useEmotionTheme } from "~lib/hooks/useEmotionTheme"
 import { useTextInputAutoExpand } from "~lib/hooks/useTextInputAutoExpand"
+import { ScriptRunState } from "~lib/ScriptRunState"
 import type { EmotionTheme } from "~lib/theme/types"
 import { convertRemToPx } from "~lib/theme/utils"
 import { FileSize, sizeConverter } from "~lib/util/FileHelper"
@@ -207,6 +211,10 @@ function ChatInput({
   const [dropzoneResetCounter, setDropzoneResetCounter] = useState(0)
 
   const acceptAudio = element.acceptAudio ?? false
+
+  const { scriptRunState, stopScript } = useContext(ScriptRunContext)
+  const [wasSubmitted, setWasSubmitted] = useState(false)
+  const submitMode = element.submitMode
 
   // Cleanup: abort any in-progress uploads on unmount
   useEffect(() => {
@@ -561,6 +569,11 @@ function ChatInput({
         fragmentId
       )
 
+      // Track submission for submit_mode behavior
+      if (submitMode !== ChatInputProto.SubmitMode.SUBMIT_MODE_NONE) {
+        setWasSubmitted(true)
+      }
+
       // Reset dropzone when files are cleared on submit
       if (files.length > 0) {
         setDropzoneResetCounter(c => c + 1)
@@ -581,6 +594,7 @@ function ChatInput({
       element,
       fragmentId,
       autoExpand,
+      submitMode,
     ]
   )
 
@@ -810,6 +824,49 @@ function ChatInput({
     }
   }, [fileDragged, innerWidth, innerHeight])
 
+  // Reset submission tracking when script completes
+  useEffect(() => {
+    if (scriptRunState === ScriptRunState.NOT_RUNNING) {
+      setWasSubmitted(false)
+    }
+  }, [scriptRunState])
+
+  // submit_mode state: determine if widget is in running mode and which button to show
+  const isInRunningMode =
+    wasSubmitted &&
+    submitMode !== ChatInputProto.SubmitMode.SUBMIT_MODE_NONE &&
+    (scriptRunState === ScriptRunState.RUNNING ||
+      scriptRunState === ScriptRunState.RERUN_REQUESTED)
+  const showStopButton =
+    isInRunningMode &&
+    submitMode === ChatInputProto.SubmitMode.SUBMIT_MODE_STOP
+  // In both "disabled" and "stop" modes, the textarea should be disabled during run
+  const isDisabledDuringRun = isInRunningMode
+
+  /** Renders the submit or stop button based on submit_mode state. */
+  const renderActionButton = (): React.ReactElement =>
+    showStopButton ? (
+      <StyledSendIconButton
+        onClick={stopScript}
+        disabled={false}
+        data-testid="stChatInputStopButton"
+        aria-label="Stop script"
+        primary
+      >
+        <Icon content={Stop} size="lg" color="inherit" />
+      </StyledSendIconButton>
+    ) : (
+      <StyledSendIconButton
+        onClick={handleSubmit}
+        disabled={!dirty || disabled || isDisabledDuringRun || audioUploading}
+        data-testid="stChatInputSubmitButton"
+        aria-label="Send message"
+        primary
+      >
+        <Icon content={ArrowUpward} size="lg" color="inherit" />
+      </StyledSendIconButton>
+    )
+
   const showDropzone = acceptFile !== AcceptFileValue.None && fileDragged
   const isRecording = controller.state === "recording"
 
@@ -897,7 +954,7 @@ function ChatInput({
                 onChange={handleChange}
                 onKeyDown={handleKeyDown}
                 aria-label={placeholder}
-                disabled={disabled}
+                disabled={disabled || isDisabledDuringRun}
                 rows={1}
                 aria-describedby={
                   showInstructions ? "stChatInputInstructions" : undefined
@@ -931,7 +988,7 @@ function ChatInput({
                     accept={getAccept(element.fileType)}
                     maxSize={maxFileSize}
                     acceptFile={acceptFile}
-                    disabled={disabled}
+                    disabled={disabled || isDisabledDuringRun}
                     fileTypes={element.fileType}
                   />
                 )}
@@ -963,7 +1020,9 @@ function ChatInput({
                       >
                         <StyledSendIconButton
                           onClick={handleMicClickVoid}
-                          disabled={disabled || audioUploading}
+                          disabled={
+                            disabled || isDisabledDuringRun || audioUploading
+                          }
                           hasError
                           data-testid="stChatInputMicButton"
                           aria-label="Start recording"
@@ -978,7 +1037,9 @@ function ChatInput({
                     ) : (
                       <StyledSendIconButton
                         onClick={handleMicClickVoid}
-                        disabled={disabled || audioUploading}
+                        disabled={
+                          disabled || isDisabledDuringRun || audioUploading
+                        }
                         data-testid="stChatInputMicButton"
                         aria-label="Start recording"
                       >
@@ -987,15 +1048,7 @@ function ChatInput({
                     )}
                   </>
                 )}
-                <StyledSendIconButton
-                  onClick={handleSubmit}
-                  disabled={!dirty || disabled || audioUploading}
-                  data-testid="stChatInputSubmitButton"
-                  aria-label="Send message"
-                  primary
-                >
-                  <Icon content={ArrowUpward} size="lg" color="inherit" />
-                </StyledSendIconButton>
+                {renderActionButton()}
               </StyledRightCluster>
             </StyledToolbarRow>
           ) : (
@@ -1012,7 +1065,7 @@ function ChatInput({
                     accept={getAccept(element.fileType)}
                     maxSize={maxFileSize}
                     acceptFile={acceptFile}
-                    disabled={disabled}
+                    disabled={disabled || isDisabledDuringRun}
                     fileTypes={element.fileType}
                   />
                 )}
@@ -1074,7 +1127,11 @@ function ChatInput({
                           >
                             <StyledSendIconButton
                               onClick={handleMicClickVoid}
-                              disabled={disabled || audioUploading}
+                              disabled={
+                                disabled ||
+                                isDisabledDuringRun ||
+                                audioUploading
+                              }
                               hasError
                               data-testid="stChatInputMicButton"
                               aria-label="Start recording"
@@ -1089,7 +1146,9 @@ function ChatInput({
                         ) : (
                           <StyledSendIconButton
                             onClick={handleMicClickVoid}
-                            disabled={disabled || audioUploading}
+                            disabled={
+                              disabled || isDisabledDuringRun || audioUploading
+                            }
                             data-testid="stChatInputMicButton"
                             aria-label="Start recording"
                           >
@@ -1102,15 +1161,7 @@ function ChatInput({
                         )}
                       </>
                     )}
-                    <StyledSendIconButton
-                      onClick={handleSubmit}
-                      disabled={!dirty || disabled || audioUploading}
-                      data-testid="stChatInputSubmitButton"
-                      aria-label="Send message"
-                      primary
-                    >
-                      <Icon content={ArrowUpward} size="lg" color="inherit" />
-                    </StyledSendIconButton>
+                    {renderActionButton()}
                   </>
                 )}
               </StyledRightCluster>

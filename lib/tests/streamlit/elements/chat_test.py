@@ -1018,3 +1018,38 @@ class PopUploadFilesTest(DeltaGeneratorTestCase):
         ):
             result = _pop_audio_file(proto)
             assert result is None
+
+
+class ChatInputSubmitModeTest(DeltaGeneratorTestCase):
+    """Test submit_mode parameter for st.chat_input."""
+
+    @parameterized.expand(
+        [
+            (None, ChatInput.SubmitMode.SUBMIT_MODE_NONE, "none_explicit"),
+            ("disabled", ChatInput.SubmitMode.SUBMIT_MODE_DISABLED, "disabled_str"),
+            ("stop", ChatInput.SubmitMode.SUBMIT_MODE_STOP, "stop"),
+        ]
+    )
+    def test_submit_mode_mapping(self, submit_mode, expected, _name):
+        """Test that submit_mode parameter maps correctly to proto enum values."""
+        st.chat_input("Placeholder", submit_mode=submit_mode)
+        c = self.get_delta_from_queue().new_element.chat_input
+        assert c.submit_mode == expected
+
+    def test_submit_mode_default(self):
+        """Test that submit_mode defaults to SUBMIT_MODE_NONE when not specified."""
+        st.chat_input("Placeholder")
+        c = self.get_delta_from_queue().new_element.chat_input
+        assert c.submit_mode == ChatInput.SubmitMode.SUBMIT_MODE_NONE
+
+    def test_submit_mode_invalid(self):
+        """Test that invalid submit_mode values raise an error."""
+        with pytest.raises(StreamlitAPIException) as exc:
+            st.chat_input("Placeholder", submit_mode="invalid")
+        assert "The `submit_mode` parameter must be" in str(exc.value)
+
+    def test_submit_mode_bool_not_allowed(self):
+        """Test that bool values are not accepted for submit_mode."""
+        with pytest.raises(StreamlitAPIException) as exc:
+            st.chat_input("Placeholder", submit_mode=True)
+        assert "The `submit_mode` parameter must be" in str(exc.value)

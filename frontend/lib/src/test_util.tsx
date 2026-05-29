@@ -107,6 +107,7 @@ const defaultViewStateContextValue = {
 }
 
 const defaultScriptRunContextValue = {
+  stopScript: () => {},
   scriptRunState: ScriptRunState.NOT_RUNNING,
   scriptRunId: "script run 123",
   fragmentIdsThisRun: [],
@@ -307,6 +308,7 @@ export const renderWithContexts = (
     scriptRunState: ScriptRunState.NOT_RUNNING,
     scriptRunId: "script run 123",
     fragmentIdsThisRun: [],
+    stopScript: vi.fn(),
     ...options.scriptRunContext,
   }
 

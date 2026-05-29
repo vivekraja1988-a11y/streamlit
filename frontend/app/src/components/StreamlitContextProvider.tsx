@@ -80,6 +80,7 @@ type ThemeContextValues = {
 }
 
 type ScriptRunContextValues = {
+  stopScript: () => void
   scriptRunState: ScriptRunState
   scriptRunId: string
   fragmentIdsThisRun: Array<string>
@@ -138,6 +139,7 @@ const StreamlitContextProvider: React.FC<StreamlitContextProviderProps> = ({
   setTheme,
   availableThemes,
   // ScriptRunContext
+  stopScript,
   scriptRunState,
   scriptRunId,
   fragmentIdsThisRun,
@@ -230,11 +232,12 @@ const StreamlitContextProvider: React.FC<StreamlitContextProviderProps> = ({
   // Memoized object for ScriptRunContext values
   const scriptRunContextProps = useMemo<ScriptRunContextProps>(
     () => ({
+      stopScript,
       scriptRunState,
       scriptRunId,
       fragmentIdsThisRun,
     }),
-    [scriptRunState, scriptRunId, fragmentIdsThisRun]
+    [stopScript, scriptRunState, scriptRunId, fragmentIdsThisRun]
   )
 
   const formsContextProps: FormsContextProps = useMemo(
