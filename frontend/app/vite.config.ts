@@ -145,13 +145,23 @@ export default defineConfig(({ command }) => ({
         find: "react-syntax-highlighter",
         replacement: "react-syntax-highlighter/dist/cjs/index.js",
       },
-      // Redirect old lodash to lodash-es to avoid duplication
+      // Redirect old lodash to lodash-es to avoid duplication.
+      // Use a regex that matches "lodash" only at the start of the import path,
+      // so it doesn't interfere with mermaid's bundled lodash (which uses internal
+      // paths like "lodash-es/hasIn" that should not be aliased).
       {
-        find: "lodash",
+        find: /^lodash$/,
         replacement: "lodash-es",
       },
       ...profilerAliases,
     ],
+  },
+  // Prevent Vite from pre-bundling mermaid. Mermaid bundles its own lodash
+  // internally with __esm wrappers (e.g., init_hasIn). When Vite pre-bundles
+  // mermaid, these internal references can break because the lodash->lodash-es
+  // alias above can interfere with mermaid's bundled lodash code.
+  optimizeDeps: {
+    exclude: ["mermaid"],
   },
   server: {
     open: true,
