@@ -44,10 +44,6 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
-      - name: Install Python deps for notifications
-        run: |
-          uv pip install --system requests
-
       - name: Configure Git
         env:
           GIT_ACTOR: ${{ github.actor }}
@@ -204,4 +200,4 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           PR_URL: ${{ steps.create_pr.outputs.pr_url }}
         run: |
-          python scripts/slack_notifications.py release_automation tag_pr_created
+          uv run python scripts/slack_notifications.py release_automation tag_pr_created
