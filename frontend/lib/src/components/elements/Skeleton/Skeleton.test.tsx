@@ -23,35 +23,13 @@ import { render } from "~lib/test_util"
 import { Skeleton } from "./Skeleton"
 
 describe("Skeleton element", () => {
-  it("renders without delay", () => {
-    const props = SkeletonProto.create()
-    render(<Skeleton element={props} />)
+  it("renders with correct styling and fills container", () => {
+    render(<Skeleton element={SkeletonProto.create()} />)
 
-    // Render the skeleton immediately, without any sort of delay.
-    // (This is normal React behavior, but different from AppSkeleton, so I'm
-    // writing a very trivial test for it.)
-    const skeletonElement = screen.getByTestId("stSkeleton")
+    const skeletonElement = screen.getByTestId("stSkeletonElement")
     expect(skeletonElement).toBeVisible()
     expect(skeletonElement).toHaveClass("stSkeleton")
-  })
-
-  it("converts properties appropriately", () => {
-    const props = SkeletonProto.create({ height: 5 })
-
-    render(<Skeleton element={props} />)
-
-    const testSkeleton = screen.getByTestId("stSkeleton")
-    expect(testSkeleton).toHaveAttribute("height", "5px")
-    expect(testSkeleton).not.toHaveAttribute("width")
-  })
-
-  it("renders app skeleton", async () => {
-    const props = SkeletonProto.create({
-      style: SkeletonProto.SkeletonStyle.APP,
-    })
-    render(<Skeleton element={props} />)
-
-    // Await the skeleton to appear.
-    expect(await screen.findByTestId("stAppSkeleton")).toBeVisible()
+    // Use toHaveStyle for Emotion CSS-in-JS styles, not toHaveAttribute
+    expect(skeletonElement).toHaveStyle({ height: "100%", width: "100%" })
   })
 })

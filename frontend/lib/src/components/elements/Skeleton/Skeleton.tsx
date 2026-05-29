@@ -18,23 +18,34 @@ import { FC, memo } from "react"
 
 import { Skeleton as SkeletonProto } from "@streamlit/protobuf"
 
-import { AppSkeleton } from "./AppSkeleton"
 import { SquareSkeleton } from "./styled-components"
 
-const RawSkeleton: FC<React.PropsWithChildren<{ element: SkeletonProto }>> = ({
-  element,
-}) => {
-  if (element.style == SkeletonProto.SkeletonStyle.APP) {
-    return <AppSkeleton /> // internal-only, does not use any of the element properties
-  }
-
-  return (
-    <SquareSkeleton
-      className="stSkeleton"
-      data-testid="stSkeleton"
-      height={element?.height ? element.height + "px" : undefined}
-    />
-  )
+interface SkeletonProps {
+  element: SkeletonProto
 }
+
+/**
+ * User-facing skeleton element for st.skeleton().
+ * Fills its container (100% width/height) because the parent
+ * ElementContainer is sized via layout config.
+ *
+ * Note: The element prop contains style and height fields, but height is
+ * handled by the parent container's layout config, and style is reserved
+ * for future use (e.g., APP skeleton style).
+ *
+ * Uses "stSkeletonElement" test ID to distinguish from internal loading
+ * skeletons (Suspense fallbacks) that use "stSkeleton".
+ */
+const RawSkeleton: FC<SkeletonProps> = (_props: SkeletonProps) => (
+  <SquareSkeleton
+    className="stSkeleton"
+    data-testid="stSkeletonElement"
+    height="100%"
+    width="100%"
+    role="status"
+    aria-busy="true"
+    aria-label="Loading"
+  />
+)
 
 export const Skeleton = memo(RawSkeleton)

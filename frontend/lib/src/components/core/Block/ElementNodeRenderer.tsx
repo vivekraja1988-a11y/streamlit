@@ -79,6 +79,7 @@ import { getAlertElementKind } from "~lib/components/elements/AlertElement/utils
 import ExceptionElement from "~lib/components/elements/ExceptionElement/ExceptionElement"
 import Help from "~lib/components/elements/Help/Help"
 import Markdown from "~lib/components/elements/Markdown/Markdown"
+import { AppSkeleton } from "~lib/components/elements/Skeleton/AppSkeleton"
 import { Skeleton } from "~lib/components/elements/Skeleton/Skeleton"
 import TextElement from "~lib/components/elements/TextElement/TextElement"
 import Heading from "~lib/components/shared/StreamlitMarkdown/Heading"
@@ -566,20 +567,31 @@ const RawElementNodeRenderer = (
         </ElementContainer>
       )
 
-    case "skeleton":
-      // Without this style, the skeleton width relies on the flex container that
-      // wraps the page contents having align-items: stretch. There was a regression
-      // where this default was changed. It is more robust to ensure that the skeleton
-      // has this width.
+    case "skeleton": {
+      const skeletonProto = node.element.skeleton as SkeletonProto
+      // AppSkeleton (internal full-page loading) uses FULL_WIDTH to fill the app container.
+      // Regular st.skeleton() uses LARGE_ELEMENT which respects the layout config's
+      // widthConfig and heightConfig from the public API.
+      const isAppSkeleton =
+        skeletonProto.style === SkeletonProto.SkeletonStyle.APP
       return (
         <ElementContainer
           node={node}
-          config={ElementContainerConfig.FULL_WIDTH}
+          config={
+            isAppSkeleton
+              ? ElementContainerConfig.FULL_WIDTH
+              : ElementContainerConfig.LARGE_ELEMENT
+          }
           isStale={isStale}
         >
-          <Skeleton element={node.element.skeleton as SkeletonProto} />
+          {isAppSkeleton ? (
+            <AppSkeleton />
+          ) : (
+            <Skeleton element={skeletonProto} />
+          )}
         </ElementContainer>
       )
+    }
 
     case "snow":
       // Specifically use node.scriptRunId vs. scriptRunId from context
