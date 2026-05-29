@@ -318,11 +318,15 @@ def create_mappings(
     formatted_options: list[str] = []
     for index, option in enumerate(options):
         formatted_option = format_func(option)
+        if formatted_option in formatted_option_to_option_mapping:
+            raise StreamlitAPIException(
+                "Duplicate option labels are not allowed. "
+                f"The label '{formatted_option}' appears more than once. "
+                "Please ensure all options produce unique labels. "
+                "If you are using a custom format_func, ensure it returns a "
+                "unique string for every option."
+            )
         formatted_options.append(formatted_option)
-        # If formatted labels are duplicated, the last one wins. We keep this
-        # behavior to mirror radio/selectbox/multiselect, but it makes selection
-        # ambiguous for string-based widgets.
-        # TODO: Consider raising a StreamlitAPIException on duplicate labels.
         formatted_option_to_option_mapping[formatted_option] = index
 
     return (
