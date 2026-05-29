@@ -15,6 +15,7 @@
  */
 
 import JsonCellRenderer from "./cells/JsonCell"
+import MarkdownCellRenderer from "./cells/MarkdownCell"
 import MediaCellRenderer from "./cells/MediaCell"
 import MultiSelectCellRenderer from "./cells/MultiSelectCell"
 import {
@@ -28,6 +29,7 @@ import ImageColumn from "./ImageColumn"
 import JsonColumn from "./JsonColumn"
 import LinkColumn from "./LinkColumn"
 import ListColumn from "./ListColumn"
+import MarkdownColumn from "./MarkdownColumn"
 import { AudioColumn, VideoColumn } from "./MediaColumn"
 import MultiselectColumn from "./MultiselectColumn"
 import NumberColumn from "./NumberColumn"
@@ -71,11 +73,13 @@ export const ColumnTypes = new Map<string, ColumnCreator>(
     video: VideoColumn,
     progress: ProgressColumn,
     json: JsonColumn,
+    markdown: MarkdownColumn,
   })
 )
 
 export const CustomCells = [
   JsonCellRenderer,
+  MarkdownCellRenderer,
   MediaCellRenderer,
   MultiSelectCellRenderer,
 ]

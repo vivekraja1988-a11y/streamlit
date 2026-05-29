@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from e2e_playwright.conftest import ImageCompareFunction, wait_for_app_run
@@ -102,6 +103,9 @@ def test_data_editor_supports_various_configurations(
         _get_editor(app, "multiselect-column"), name="st_data_editor-multiselect_column"
     )
     assert_snapshot(
+        _get_editor(app, "markdown-column"), name="st_data_editor-markdown_column"
+    )
+    assert_snapshot(
         _get_editor(app, "missing-placeholder"),
         name="st_data_editor-missing_placeholder",
     )
@@ -168,6 +172,121 @@ def test_multiselect_cell_editing_with_new_options(app: Page):
     expect_prefixed_markdown(
         app, "Multiselect column return:", "new value", exact_match=False
     )
+
+
+@pytest.mark.only_browser(
+    "chromium"
+)  # Cell overlay visibility flaky on webkit and Firefox
+def test_markdown_cell_editing(themed_app: Page, assert_snapshot: ImageCompareFunction):
+    """Test that the markdown cell can be edited."""
+    markdown_column_df = _get_editor(themed_app, "markdown-column")
+    expect_canvas_to_be_visible(markdown_column_df)
+
+    # Click on the first cell of the markdown column to open the overlay
+    click_on_cell(markdown_column_df, 1, 0, double_click=True, column_width="medium")
+
+    # Get the cell overlay - it starts in view mode showing rendered markdown
+    cell_overlay = get_open_cell_overlay(themed_app)
+    expect(cell_overlay).to_be_visible()
+    expect(cell_overlay.get_by_test_id("stMarkdownColumnViewer")).to_be_visible()
+    assert_snapshot(cell_overlay, name="st_data_editor-markdown_col_viewer")
+
+    # Click the edit button to switch to edit mode
+    edit_button = cell_overlay.get_by_label("Edit")
+    expect(edit_button).to_be_visible()
+    edit_button.click()
+
+    # Now the textarea should be visible
+    textarea = cell_overlay.locator("textarea")
+    expect(textarea).to_be_visible()
+    assert_snapshot(cell_overlay, name="st_data_editor-markdown_col_editor")
+
+    # Clear and type new markdown content
+    textarea.fill("## New Header\n\nThis is **updated** content.")
+
+    # Save using keyboard shortcut (Ctrl/Cmd+Enter) - this reliably commits the change
+    textarea.press(f"{COMMAND_KEY}+Enter")
+
+    # After saving, should be back in viewer mode with updated content
+    viewer = cell_overlay.get_by_test_id("stMarkdownColumnViewer")
+    expect(viewer).to_be_visible()
+    expect(viewer).to_contain_text("New Header")
+    expect(viewer).to_contain_text("updated")
+
+
+@pytest.mark.only_browser(
+    "chromium"
+)  # Cell overlay visibility flaky on webkit and Firefox
+def test_markdown_cell_keyboard_shortcuts(app: Page):
+    """Test that markdown editor keyboard shortcuts (Ctrl+Enter to save, Escape to cancel) work."""
+    markdown_column_df = _get_editor(app, "markdown-column")
+    expect_canvas_to_be_visible(markdown_column_df)
+
+    # Open the second markdown cell (row 2) to avoid conflicts with previous test
+    click_on_cell(markdown_column_df, 2, 0, double_click=True, column_width="medium")
+    cell_overlay = get_open_cell_overlay(app)
+    expect(cell_overlay).to_be_visible()
+
+    edit_button = cell_overlay.get_by_label("Edit")
+    expect(edit_button).to_be_visible()
+    edit_button.click()
+
+    textarea = cell_overlay.locator("textarea")
+    expect(textarea).to_be_visible()
+
+    # Test Ctrl/Cmd+Enter to save
+    shortcut_content = "## Shortcut Header\n\nSaved via keyboard."
+    textarea.fill(shortcut_content)
+    textarea.press(f"{COMMAND_KEY}+Enter")
+
+    # After saving via shortcut, should be back in viewer mode with saved content
+    viewer = cell_overlay.get_by_test_id("stMarkdownColumnViewer")
+    expect(viewer).to_be_visible()
+    expect(viewer).to_contain_text("Shortcut Header")
+    expect(viewer).to_contain_text("Saved via keyboard")
+
+    # Close the overlay by clicking outside and wait for app rerun
+    reset_focus(app)
+    wait_for_app_run(app)
+
+    # Verify the edited value was committed to backend widget state
+    expect_prefixed_markdown(
+        app, "Markdown column return:", "Shortcut Header", exact_match=False
+    )
+    expect_prefixed_markdown(
+        app, "Markdown column return:", "Saved via keyboard", exact_match=False
+    )
+
+    # Re-fetch the dataframe locator since the page has been rerendered
+    markdown_column_df = _get_editor(app, "markdown-column")
+    expect_canvas_to_be_visible(markdown_column_df)
+
+    # Re-open the cell to test Escape to cancel
+    click_on_cell(markdown_column_df, 2, 0, double_click=True, column_width="medium")
+    cell_overlay = get_open_cell_overlay(app)
+    expect(cell_overlay).to_be_visible()
+
+    # Test Escape to cancel - click edit, type new content, then cancel
+    edit_button = cell_overlay.get_by_label("Edit")
+    expect(edit_button).to_be_visible()
+    edit_button.click()
+
+    textarea = cell_overlay.locator("textarea")
+    expect(textarea).to_be_visible()
+
+    cancelled_content = shortcut_content + " Cancelled"
+    textarea.fill(cancelled_content)
+    textarea.press("Escape")
+
+    # Should be back in viewer mode without saving
+    viewer = cell_overlay.get_by_test_id("stMarkdownColumnViewer")
+    expect(viewer).to_be_visible()
+
+    # Re-enter edit mode and verify cancelled content was not saved
+    cell_overlay.get_by_label("Edit").click()
+    textarea = cell_overlay.locator("textarea")
+    expect(textarea).to_have_value(shortcut_content)
+    expect(textarea).not_to_have_value(cancelled_content)
 
 
 def test_check_top_level_class(app: Page):
