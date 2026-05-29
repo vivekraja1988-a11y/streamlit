@@ -72,6 +72,7 @@ import {
   StyledHeadingActionElements,
   StyledHeadingWithActionElements,
   StyledHelpIconWrapper,
+  StyledHexColorDot,
   StyledLinkIcon,
   StyledPreWrapper,
   StyledStreamlitMarkdown,
@@ -527,6 +528,13 @@ export const CustomCodeTag: FC<CustomCodeTagProps> = ({
     </ErrorBoundary>
   ) : (
     <StyledInlineCode className={className} {...omit(props, "node")}>
+      {isHexColor(codeText) && (
+        <StyledHexColorDot
+          data-testid="stHexColorDot"
+          aria-hidden="true"
+          color={codeText}
+        />
+      )}
       {children}
     </StyledInlineCode>
   )
@@ -692,6 +700,16 @@ export function isValidCssColor(color: string): boolean {
   } catch {
     return false
   }
+}
+
+const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/
+
+/**
+ * Tests whether a string is a valid GitHub-style hex color: 6 digits
+ * (e.g. `#0969DA`).
+ */
+export function isHexColor(value: string): boolean {
+  return HEX_COLOR_RE.test(value)
 }
 
 /**

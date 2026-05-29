@@ -37,6 +37,7 @@ import StreamlitMarkdown, {
   CustomMediaTag,
   CustomPreTag,
   HeadingWithActionElements,
+  isHexColor,
   isValidCssColor,
   LinkWithTargetBlank,
 } from "./StreamlitMarkdown"
@@ -1258,6 +1259,96 @@ describe("CustomCodeTag Element", () => {
     const props = getCustomCodeTagProps({ children })
     render(<CustomCodeTag {...props} />)
     expect(screen.getByTestId("stCode")).toHaveTextContent(expected)
+  })
+})
+
+describe("isHexColor", () => {
+  it.each([
+    ["#0969DA", true],
+    ["#abcdef", true],
+    ["#ABCDEF", true],
+    ["", false],
+    ["#", false],
+    ["#F00", false],
+    ["#ABCD", false],
+    ["#aabbccdd", false],
+    ["#12345", false],
+    ["#GGG", false],
+    [" #F00", false],
+    ["#0969DA ", false],
+  ])("isHexColor(%j) === %s", (input, expected) => {
+    expect(isHexColor(input)).toBe(expected)
+  })
+})
+
+describe("Hex color badge in inline code", () => {
+  it("renders a color dot for 6-digit hex color", () => {
+    const props = getCustomCodeTagProps({ inline: true, children: "#0969DA" })
+    render(<CustomCodeTag {...props} />)
+
+    const dot = screen.getByTestId("stHexColorDot")
+    expect(dot).toBeVisible()
+    expect(dot).toHaveStyle({ backgroundColor: "#0969DA" })
+    expect(dot).toHaveStyle({
+      border: `${mockTheme.emotion.sizes.borderWidth} solid ${mockTheme.emotion.colors.borderColor}`,
+    })
+  })
+
+  it("does not render a color dot for 3-digit hex color", () => {
+    const props = getCustomCodeTagProps({ inline: true, children: "#F00" })
+    render(<CustomCodeTag {...props} />)
+
+    expect(screen.queryByTestId("stHexColorDot")).not.toBeInTheDocument()
+  })
+
+  it("does not render a color dot for 4-digit hex color", () => {
+    const props = getCustomCodeTagProps({ inline: true, children: "#F00F" })
+    render(<CustomCodeTag {...props} />)
+
+    expect(screen.queryByTestId("stHexColorDot")).not.toBeInTheDocument()
+  })
+
+  it("does not render a color dot for 8-digit hex color", () => {
+    const props = getCustomCodeTagProps({
+      inline: true,
+      children: "#0969DA80",
+    })
+    render(<CustomCodeTag {...props} />)
+
+    expect(screen.queryByTestId("stHexColorDot")).not.toBeInTheDocument()
+  })
+
+  it("does not render a color dot for invalid hex (#GGG)", () => {
+    const props = getCustomCodeTagProps({ inline: true, children: "#GGG" })
+    render(<CustomCodeTag {...props} />)
+
+    expect(screen.queryByTestId("stHexColorDot")).not.toBeInTheDocument()
+  })
+
+  it("does not render a color dot for wrong-length hex (#12345)", () => {
+    const props = getCustomCodeTagProps({ inline: true, children: "#12345" })
+    render(<CustomCodeTag {...props} />)
+
+    expect(screen.queryByTestId("stHexColorDot")).not.toBeInTheDocument()
+  })
+
+  it("does not render a color dot for normal inline code", () => {
+    const props = getCustomCodeTagProps({
+      inline: true,
+      children: "some code",
+    })
+    render(<CustomCodeTag {...props} />)
+
+    expect(screen.queryByTestId("stHexColorDot")).not.toBeInTheDocument()
+  })
+
+  it("preserves the hex code text when rendering the dot", () => {
+    const props = getCustomCodeTagProps({ inline: true, children: "#0969DA" })
+    const { container } = render(<CustomCodeTag {...props} />)
+
+    // The code element should contain the hex text
+    const codeEl = container.querySelector("code")
+    expect(codeEl).toHaveTextContent("#0969DA")
   })
 })
 
