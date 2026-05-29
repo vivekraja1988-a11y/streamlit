@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -99,3 +100,70 @@ def image():
 
 if st.checkbox("Show image", True):
     image()
+
+
+# Regression tests for PR #14565 / issue #14555:
+# The cache spinner overlay must not visually hide or clip the first element
+# rendered inside a @st.cache_data function — regardless of which element
+# happens to be first (progress, text, markdown, image, ...).
+
+if "cache_overlap_token" not in st.session_state:
+    st.session_state.cache_overlap_token = 0
+
+
+def _next_overlap_token() -> int:
+    st.session_state.cache_overlap_token += 1
+    return cast("int", st.session_state.cache_overlap_token)
+
+
+@st.cache_data
+def _cache_overlap_progress(token: int) -> int:
+    # Use a static progress state so the snapshot is stable while the
+    # cache spinner overlay is visible. The original bug surfaces from
+    # the progress text overlapping the spinner text — that overlap is
+    # already exercised by this static layout.
+    st.progress(0.42, text="(42/100) Computing...")
+    time.sleep(2)
+    return token
+
+
+@st.cache_data
+def _cache_overlap_text(token: int) -> int:
+    st.text("hello")
+    time.sleep(2)
+    return token
+
+
+@st.cache_data
+def _cache_overlap_markdown(token: int) -> int:
+    # Descenders (p/g/j/y) exercise the gradient-clip case from the PR thread.
+    st.markdown("# Heading pgjy")
+    time.sleep(2)
+    return token
+
+
+@st.cache_data
+def _cache_overlap_image(token: int) -> int:
+    img: npt.NDArray[np.uint8] = np.tile(
+        np.linspace(0, 255, 200, dtype=np.uint8), (80, 1)
+    )
+    st.image(img, caption="cache overlap image", clamp=True)
+    time.sleep(2)
+    return token
+
+
+if st.button("Run cache spinner over progress"):
+    with st.container(key="cache_overlap_progress_container"):
+        _cache_overlap_progress(_next_overlap_token())
+
+if st.button("Run cache spinner over text"):
+    with st.container(key="cache_overlap_text_container"):
+        _cache_overlap_text(_next_overlap_token())
+
+if st.button("Run cache spinner over markdown"):
+    with st.container(key="cache_overlap_markdown_container"):
+        _cache_overlap_markdown(_next_overlap_token())
+
+if st.button("Run cache spinner over image"):
+    with st.container(key="cache_overlap_image_container"):
+        _cache_overlap_image(_next_overlap_token())

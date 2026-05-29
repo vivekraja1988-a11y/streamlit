@@ -15,10 +15,16 @@
 
 import re
 
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from e2e_playwright.conftest import ImageCompareFunction, rerun_app, wait_for_app_run
-from e2e_playwright.shared.app_utils import click_button, click_checkbox, get_image
+from e2e_playwright.shared.app_utils import (
+    click_button,
+    click_checkbox,
+    get_button,
+    get_element_by_key,
+    get_image,
+)
 
 
 def test_that_caching_shows_cached_widget_warning(app: Page):
@@ -113,3 +119,93 @@ def test_cached_code_replay(app: Page, assert_snapshot: ImageCompareFunction):
     click_checkbox(app, "Show code")
     expect(code_element).to_be_visible()
     assert_snapshot(code_element, name="st_cache_data-st_code_after_caching")
+
+
+# Regression tests for PR #14565 / issue #14555:
+# The cache spinner overlay used to visually hide a leading st.progress bar.
+# The PR fixes that by extending the spinner's paddingBottom and pulling the
+# container up with a negative marginBottom. These tests assert that the fix
+# works for the original case AND does not regress visuals for other common
+# first elements raised in review (st.text, st.markdown, st.image).
+#
+# Note: we click via `get_button(...).click()` (not `click_button`) because
+# `click_button` waits for the app run to finish, which would make the cache
+# spinner disappear before we can observe it.
+
+
+def _expect_cache_spinner_visible(container: Locator) -> None:
+    """The cache spinner uses data-testid=stSpinner + class stCacheSpinner."""
+    expect(container.locator(".stCacheSpinner")).to_be_visible()
+
+
+def test_cache_spinner_does_not_hide_progress(
+    app: Page, assert_snapshot: ImageCompareFunction
+):
+    """The cache spinner must not visually hide a leading st.progress bar."""
+    get_button(app, "Run cache spinner over progress").click()
+
+    container = get_element_by_key(app, "cache_overlap_progress_container")
+    _expect_cache_spinner_visible(container)
+    # The progress bar must remain visible while the cache spinner overlay is on.
+    expect(container.get_by_test_id("stProgress")).to_be_visible()
+    # Must NOT happen: a second (orphan) spinner re-rendered next to the progress.
+    expect(container.get_by_test_id("stSpinner")).to_have_count(1)
+
+    # Slightly relaxed image_threshold (1%) to absorb minor anti-aliasing /
+    # spinner-icon rendering noise that the default 0.2% can flag as failure.
+    assert_snapshot(
+        container,
+        name="st_cache_data-cache_spinner_over_progress",
+        image_threshold=0.01,
+    )
+
+
+def test_cache_spinner_does_not_clip_text(
+    app: Page, assert_snapshot: ImageCompareFunction
+):
+    """The cache spinner must not clip a short leading st.text."""
+    get_button(app, "Run cache spinner over text").click()
+
+    container = get_element_by_key(app, "cache_overlap_text_container")
+    _expect_cache_spinner_visible(container)
+    expect(container.get_by_text("hello", exact=True)).to_be_visible()
+
+    assert_snapshot(
+        container,
+        name="st_cache_data-cache_spinner_over_text",
+        image_threshold=0.01,
+    )
+
+
+def test_cache_spinner_does_not_clip_markdown_descenders(
+    app: Page, assert_snapshot: ImageCompareFunction
+):
+    """The cache spinner gradient must not clip descenders in a heading."""
+    get_button(app, "Run cache spinner over markdown").click()
+
+    container = get_element_by_key(app, "cache_overlap_markdown_container")
+    _expect_cache_spinner_visible(container)
+    expect(container.get_by_role("heading", name="Heading pgjy")).to_be_visible()
+
+    assert_snapshot(
+        container,
+        name="st_cache_data-cache_spinner_over_markdown",
+        image_threshold=0.01,
+    )
+
+
+def test_cache_spinner_does_not_clip_image(
+    app: Page, assert_snapshot: ImageCompareFunction
+):
+    """The cache spinner must not clip a leading st.image."""
+    get_button(app, "Run cache spinner over image").click()
+
+    container = get_element_by_key(app, "cache_overlap_image_container")
+    _expect_cache_spinner_visible(container)
+    expect(container.get_by_test_id("stImage")).to_be_visible()
+
+    assert_snapshot(
+        container,
+        name="st_cache_data-cache_spinner_over_image",
+        image_threshold=0.01,
+    )
