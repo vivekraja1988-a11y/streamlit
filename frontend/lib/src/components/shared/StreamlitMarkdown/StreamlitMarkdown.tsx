@@ -1092,6 +1092,32 @@ export function LinkWithTargetBlank(props: LinkProps): ReactElement {
   )
 }
 
+// Convert markdown-style links inside <div> blocks to <a> tags so they render correctly
+function mdLinksInDiv(source: string): string {
+  const divBlockRegex = /<div\b[^>]*>[\s\S]*?<\/div>/gi
+  const markdownLinkRegex = /\[([^\]]+)\]\((.+?)\)/g
+
+  return source.replace(divBlockRegex, divBlock => {
+    const firstGtIndex = divBlock.indexOf(">")
+
+    if (firstGtIndex === -1) {
+      return divBlock
+    }
+
+    const openingTag = divBlock.slice(0, firstGtIndex + 1)
+    const innerAndClosing = divBlock.slice(firstGtIndex + 1)
+
+    const processedInnerAndClosing = innerAndClosing.replace(
+      markdownLinkRegex,
+      (_match, label, href) => {
+        return `<a href="${href}">${label}</a>`
+      }
+    )
+
+    return `${openingTag}${processedInnerAndClosing}`
+  })
+}
+
 export const RenderedMarkdown = memo(function RenderedMarkdown({
   allowHTML,
   source,
@@ -1203,9 +1229,15 @@ export const RenderedMarkdown = memo(function RenderedMarkdown({
   )
 
   const processedSource = useMemo(() => {
+    let processed = source
+
+    if (allowHTML) {
+      processed = mdLinksInDiv(source)
+    }
+
     // Replace :material/ with :material_ to avoid conflicts with the directive plugin.
     // The material icon regex in createMaterialIconPlugin uses :material_ to match.
-    let processed = source.replaceAll(":material/", ":material_")
+    processed = processed.replaceAll(":material/", ":material_")
 
     if (isLabel) {
       // Escape markdown syntax that would be stripped in labels, leaving empty content.
