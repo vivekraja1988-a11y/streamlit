@@ -221,6 +221,9 @@ const generateSpec = (
  * Preprocesses the element to generate the VegaLite spec.
  * It stabilizes some of the references (e.g. selectionMode and spec)
  * and avoids further processing if unnecessary.
+ *
+ * Returns the processed element along with a `baseSpecKey` that is stable
+ * across container dimension changes (for use with native Vega resize API).
  */
 export const useVegaElementPreprocessor = (
   element: VegaLiteChartElement,
@@ -228,7 +231,7 @@ export const useVegaElementPreprocessor = (
   containerHeight: number,
   useContainerWidth: boolean,
   useContainerHeight: boolean
-): VegaLiteChartElement => {
+): VegaLiteChartElement & { baseSpecKey: string } => {
   const theme = useEmotionTheme()
 
   const {
@@ -249,6 +252,51 @@ export const useVegaElementPreprocessor = (
     return inputSelectionMode
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deep comparison via serialized key
   }, [selectionModeKey])
+
+  // Stable key that changes only when non-dimension parts of the spec change,
+  // OR when fixed (non-container-driven) dimensions change.
+  // Container-driven dimensions are excluded because they change frequently during
+  // resize and we handle those via Vega's native resize API for better performance.
+  // Fixed dimensions (from the spec itself) are included because they represent
+  // intentional user-specified sizes that should trigger a view recreation.
+  // We also include useContainerWidth/useContainerHeight booleans in the key because
+  // transitioning to/from container-driven sizing (e.g., entering fullscreen) requires
+  // a full view recreation to properly apply the new dimensions.
+  const baseSpecKey = useMemo(() => {
+    const baseSpec = generateSpec(
+      inputSpec,
+      useContainerWidth,
+      useContainerHeight,
+      vegaLiteTheme,
+      selectionMode,
+      theme,
+      0, // Use 0 for container dimensions
+      0
+    )
+    // Only strip dimensions that are container-driven.
+    // Fixed dimensions from the spec should be included in the key.
+    const specForKey = { ...baseSpec }
+    if (useContainerWidth) {
+      delete specForKey.width
+    }
+    if (useContainerHeight) {
+      delete specForKey.height
+    }
+    // Include the sizing mode flags so that transitioning to/from
+    // container-driven sizing triggers a view recreation.
+    return JSON.stringify({
+      spec: specForKey,
+      useContainerWidth,
+      useContainerHeight,
+    })
+  }, [
+    inputSpec,
+    useContainerWidth,
+    useContainerHeight,
+    vegaLiteTheme,
+    selectionMode,
+    theme,
+  ])
 
   const spec = useMemo(
     () =>
@@ -286,5 +334,6 @@ export const useVegaElementPreprocessor = (
     data,
     datasets,
     useContainerWidth,
+    baseSpecKey,
   }
 }
