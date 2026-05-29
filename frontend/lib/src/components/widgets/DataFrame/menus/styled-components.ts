@@ -24,6 +24,7 @@ export const StyledMenuList = styled.div(({ theme }) => ({
   paddingBottom: theme.spacing.threeXS,
   paddingLeft: theme.spacing.xs,
   paddingRight: theme.spacing.xs,
+  maxWidth: "10rem",
 }))
 
 interface StyledMenuListItemProps {
@@ -104,6 +105,7 @@ export const StyledTypeIconContainer = styled.div(({ theme }) => ({
 export const StyledColumnNameWithIcon = styled.div(({ theme }) => ({
   display: "flex",
   alignItems: "center",
+  justifyContent: "space-between",
   flexGrow: 1,
   padding: `${theme.spacing.threeXS} ${theme.spacing.threeXS}`,
   border: `${theme.sizes.borderWidth} solid ${theme.colors.borderColor}`,
@@ -117,10 +119,8 @@ export const StyledColumnNameText = styled.span(({ theme }) => ({
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
-  flexGrow: 1,
   margin: `0 ${theme.spacing.xs}`,
   fontSize: theme.fontSizes.twoSm,
-  maxWidth: "4rem",
 }))
 
 export const StyledIconButton = styled.button(({ theme }) => ({
@@ -140,4 +140,106 @@ export const StyledIconButton = styled.button(({ theme }) => ({
   "&:active": {
     backgroundColor: theme.colors.fadedText10,
   },
+}))
+
+/**
+ * Container for the statistics panel.
+ */
+export const StyledStatisticsContainer = styled.div(({ theme }) => ({
+  display: "flex",
+  flexDirection: "column",
+  gap: theme.spacing.sm,
+  padding: theme.spacing.sm,
+  minWidth: "13rem",
+  maxWidth: "16rem",
+}))
+
+/**
+ * Height of the statistics chart in rem.
+ * Corresponds to CHART_HEIGHT (56px) in StatisticsChart.tsx.
+ */
+const STATISTICS_CHART_HEIGHT = "3.5rem"
+
+/**
+ * Container for the statistics chart.
+ */
+export const StyledStatisticsChart = styled.div(({ theme }) => ({
+  width: "100%",
+  height: STATISTICS_CHART_HEIGHT,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: theme.radii.md2,
+  overflow: "hidden",
+  "& svg": {
+    width: "100%",
+  },
+}))
+
+/**
+ * Container for statistics metrics using semantic description list.
+ */
+export const StyledStatisticsMetrics = styled.dl(({ theme }) => ({
+  display: "flex",
+  flexDirection: "column",
+  gap: theme.spacing.twoXS,
+  margin: 0,
+}))
+
+/**
+ * A row in the statistics metrics display.
+ */
+export const StyledStatisticsRow = styled.div(({ theme }) => ({
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: theme.spacing.md,
+  fontSize: theme.fontSizes.twoSm,
+  lineHeight: theme.lineHeights.base,
+}))
+
+/**
+ * Label for a statistics metric (description term).
+ */
+export const StyledStatisticsLabel = styled.dt(({ theme }) => ({
+  color: theme.colors.fadedText60,
+  whiteSpace: "nowrap",
+  fontWeight: "normal",
+}))
+
+/**
+ * Value for a statistics metric (description details).
+ */
+export const StyledStatisticsValue = styled.dd(({ theme }) => ({
+  color: theme.colors.bodyText,
+  fontWeight: theme.fontWeights.normal,
+  textAlign: "right",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  maxWidth: "8rem",
+  margin: 0,
+}))
+
+/**
+ * Empty state message for statistics.
+ */
+export const StyledStatisticsEmpty = styled.div(({ theme }) => ({
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: theme.spacing.lg,
+  color: theme.colors.fadedText60,
+  fontSize: theme.fontSizes.sm,
+  minWidth: "10rem",
+}))
+
+/**
+ * Note text for statistics (e.g., "Based on sample").
+ */
+export const StyledStatisticsNote = styled.div(({ theme }) => ({
+  fontSize: theme.fontSizes.twoSm,
+  color: theme.colors.fadedText40,
+  textAlign: "center",
+  paddingTop: theme.spacing.twoXS,
 }))
