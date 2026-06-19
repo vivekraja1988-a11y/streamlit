@@ -91,7 +91,7 @@ jobs:
           fi
 
       - name: Checkout Streamlit code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Use PR head SHA if pr_number specified, otherwise default branch
           ref: ${{ steps.pr-info.outputs.head_sha || '' }}
@@ -225,7 +225,7 @@ jobs:
 
     steps:
       - name: Checkout Streamlit code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Checkout the PR's head branch if pr_number specified, otherwise develop
           ref: ${{ needs.ai-update-docs.outputs.head_branch || 'develop' }}
