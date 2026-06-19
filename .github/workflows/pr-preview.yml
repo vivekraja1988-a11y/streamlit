@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -106,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Streamlit code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           submodules: "recursive"
@@ -151,7 +151,7 @@ jobs:
 
     steps:
       - name: Checkout Streamlit code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           submodules: "recursive"
@@ -631,7 +631,7 @@ jobs:
 
     steps:
       - name: Checkout Streamlit code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 1
@@ -688,7 +688,7 @@ jobs:
 
     steps:
       - name: Checkout Core Previews Repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: streamlit/core-previews
           # The default GITHUB_TOKEN is scoped only to the triggering streamlit/streamlit repo.
@@ -733,7 +733,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
